@@ -86,7 +86,7 @@ def plot_tics(df_widget):
   ax.set_title("Total Ion Chromatogramm")
   return fig0
 
-tics_pane = pn.pane.Matplotlib(plot_tics(df_widget), dpi=144)
+tics_pane = pn.pane.Matplotlib(plot_tics(df_widget), dpi=250)
 
 def plot_runsticker(df_widget):
   if len(df_widget.selection)==0:
@@ -124,54 +124,28 @@ def plot_runsticker(df_widget):
 
   return fig0
 
-runsticker_pane = pn.pane.Matplotlib(plot_runsticker(df_widget), dpi=144)
+runsticker_pane = pn.pane.Matplotlib(plot_runsticker(df_widget), dpi=250)
+
+row1 = pn.Row('## Row1', tics_pane, runsticker_pane, styles=dict(background='WhiteSmoke'))
+row2 = pn.Row('## Row2', df_widget, styles=dict(background='WhiteSmoke'))
+col = pn.Column('# Column', row1, row2)
+col.servable()
 
 def update_selection_plots(event):
   print(event)
+  global col
   global df_widget
-  global tics_pane
-  global runsticker_pane
   global df_widget_plotted_selection
-  
   if df_widget_plotted_selection == df_widget.selection:
     return
   else:
     df_widget_plotted_selection = df_widget.selection
-    runsticker_pane = pn.pane.Matplotlib(plot_runsticker(df_widget), dpi=144)
-    tics_pane = pn.pane.Matplotlib(plot_tics(df_widget), dpi=144)
+    col[1][1] = pn.pane.Matplotlib(plot_tics(df_widget), dpi=250)
+    col[1][2] = pn.pane.Matplotlib(plot_runsticker(df_widget), dpi=250)
     return
 
+# df_widget.selection.append(1)
+# update_selection_plots(df_widget)
 df_widget.on_click(callback=update_selection_plots)
 
-# row1 = pn.Row('## Row1', tics_pane, runsticker_pane, styles=dict(background='WhiteSmoke'))
-# row2 = pn.Row('## Row2', df_widget, styles=dict(background='WhiteSmoke'))
-# col = pn.Column('# Column', row1, row2)
-# col
-ACCENT = "#BB2649"
-RED = "#D94467"
-GREEN = "#5AD534"
-
-LINK_SVG = """
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-arrow-up-right-square" viewBox="0 0 16 16">
-  <path fill-rule="evenodd" d="M15 2a1 1 0 0 0-1-1H2a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V2zM0 2a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V2zm5.854 8.803a.5.5 0 1 1-.708-.707L9.243 6H6.475a.5.5 0 1 1 0-1h3.975a.5.5 0 0 1 .5.5v3.975a.5.5 0 1 1-1 0V6.707l-4.096 4.096z"/>
-</svg>
-"""
-
-template = pn.template.FastGridTemplate(
-    title="Portfolio Analysis",
-    accent_base_color=ACCENT,
-    header_background=ACCENT,
-    prevent_collision=True,
-    save_layout=True,
-    theme_toggle=False,
-    theme='dark',
-    row_height=160
-)
-
-template.main[0:3, 0:8]  = tics_pane
-template.main[0:3, 8:12] = runsticker_pane
-template.main[3:5, :]    = df_widget
-
-if pn.state.served:
-    template.servable()
 # !python /home/vscode/.local/bin/panel serve crg_qc2_timeseries.py
