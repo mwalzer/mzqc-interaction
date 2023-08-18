@@ -58,7 +58,6 @@ df = pd.DataFrame([{'Date': next(iter([pd.to_datetime(cd.value) for cd in rowrun
 df.Date = df.Date.dt.date
 
 df_widget_max_select = 6
-df_widget_plotted_selection = list()
 df_widget = pn.widgets.Tabulator(value=df, selectable='checkbox',
                                  show_index=False,
                                  pagination='local', page_size=10,
@@ -66,86 +65,111 @@ df_widget = pn.widgets.Tabulator(value=df, selectable='checkbox',
                                  hidden_columns=["Name",'mzrange'])
 df_widget.selectable=df_widget_max_select
 
-def plot_tics(df_widget):
-  fig0 = Figure(figsize=(6, 4))
+def plot_tics(selection=[], data=df_widget):
+  fig0 = Figure(figsize=(12, 6), dpi=250)
   ax = fig0.subplots()
 
-  selection_names = df_widget.value.iloc[df_widget.selection].Name
-  selection_dates = df_widget.value.iloc[df_widget.selection].Date
-  selection_tics = [pd.DataFrame(next(iter([m.value for m in mzqc_objs.get(n).runQualities[0].qualityMetrics if m.accession=="MS:4000104"]))) for n in selection_names]
-  selection_tics = [tic.assign(**{"Date":str(d), "Name":n}) for n,d,tic in zip(selection_names,selection_dates,selection_tics)]
-
-  if len(selection_tics)==0:
+  if len(selection)==0:
     # TODO select up to df_widget_max_select rows/QC2 runs
     return fig0
+  
+  with pn.param.set_values(col[1][1], loading=True):
+    selection_names = data.value.iloc[selection].Name
+    selection_dates = data.value.iloc[selection].Date
+    selection_tics = [pd.DataFrame(next(iter([m.value for m in mzqc_objs.get(n).runQualities[0].qualityMetrics if m.accession=="MS:4000104"]))) for n in selection_names]
+    selection_tics = [tic.assign(**{"Date":str(d), "Name":n}) for n,d,tic in zip(selection_names,selection_dates,selection_tics)]
 
-  tics_df =  pd.pivot(pd.concat(selection_tics), index="MS:1000894", columns="Date", values="MS:1000285")
-  ax = tics_df.interpolate(method='linear').plot.line(legend=True, linewidth=0.5, ax=ax)
-  ax.set_xlabel("Retentiontime [s]")
-  ax.set_ylabel("Relative Intensity of Ion Current")
-  ax.set_title("Total Ion Chromatogramm")
-  return fig0
-
-tics_pane = pn.pane.Matplotlib(plot_tics(df_widget), dpi=250)
-
-def plot_runsticker(df_widget):
-  if len(df_widget.selection)==0:
-    fig0 = Figure(figsize=(6, 4))
-    axs = fig0.subplots(2,2)
-    # TODO select up to df_widget_max_select rows/QC2 runs
+    tics_df =  pd.pivot(pd.concat(selection_tics), index="MS:1000894", columns="Date", values="MS:1000285")
+    ax = tics_df.interpolate(method='linear').plot.line(legend=True, linewidth=0.5, ax=ax)
+    ax.set_xlabel("Retentiontime [s]")
+    ax.set_ylabel("Relative Intensity of Ion Current")
+    ax.set_title("Total Ion Chromatogramm")
     return fig0
 
-  selection_df = df_widget.value.iloc[df_widget.selection]
-  fig0 = Figure(figsize=(6, 4))
+
+def plot_runsticker(selection=[], data=df_widget):
+  fig0 = Figure(figsize=(8, 6), dpi=250)
   axs = fig0.subplots(2,2)
 
-  idax = selection_df[['# MS1','# MS2', '# ID MS2', 'Date']].set_index('Date').plot.barh(ax=axs[0,0])
-  qaax = selection_df[['# Features','# ID Features', 'Date']].set_index('Date').plot.barh(ax=axs[1,0])
-  # mzax = pd.pivot(selection_df[['mzrange', 'Date']].explode('mzrange', ignore_index=True), columns="Date", values="mzrange").plot.line()
-  mzax = pd.pivot(selection_df[['mzrange', 'Date']]\
-          .reset_index().rename(columns={'index':'xpos'})\
-          .explode('mzrange', ignore_index=True).reset_index(), index=["index","xpos"]\
-          , columns="Date", values="mzrange").reset_index(level=("xpos",))\
-          .plot.line(x="xpos",ax=axs[0,1])
-  mzax.get_xaxis().set_visible(False)
-  flax = selection_df[['# Signal fluct. ↓', '# Signal fluct. ↑', 'Date']]\
-          .set_index('Date').astype('int').plot.bar(rot=45,ax=axs[1,1])
+  if len(selection)==0:
+    # TODO select up to df_widget_max_select rows/QC2 runs
+    return fig0
 
-  # axs[0, 0] = idax
-  axs[0, 0].set_title("Identification Base")
-  # axs[1, 0] = qaax
-  axs[1, 0].set_title("Quantitation Base")
-  # axs[1, 0].sharex(axs[0, 0])
-  # axs[0, 1] = mzax
-  axs[0, 1].set_title("Observed m/z Range")
-  # axs[1, 1] = flax
-  axs[1, 1].set_title("Signal Fluctuations")
-  fig0.tight_layout()
+  selection_df = data.value.iloc[selection]
+  with pn.param.set_values(col[1][2], loading=True):
+    idax = selection_df[['# MS1','# MS2', '# ID MS2', 'Date']].set_index('Date').plot.barh(ax=axs[0,0])
+    qaax = selection_df[['# Features','# ID Features', 'Date']].set_index('Date').plot.barh(ax=axs[1,0])
+    # mzax = pd.pivot(selection_df[['mzrange', 'Date']].explode('mzrange', ignore_index=True), columns="Date", values="mzrange").plot.line()
+    mzax = pd.pivot(selection_df[['mzrange', 'Date']]\
+            .reset_index().rename(columns={'index':'xpos'})\
+            .explode('mzrange', ignore_index=True).reset_index(), index=["index","xpos"]\
+            , columns="Date", values="mzrange").reset_index(level=("xpos",))\
+            .plot.line(x="xpos",ax=axs[0,1])
+    mzax.get_xaxis().set_visible(False)
+    flax = selection_df[['# Signal fluct. ↓', '# Signal fluct. ↑', 'Date']]\
+            .set_index('Date').astype('int').plot.bar(rot=45,ax=axs[1,1])
 
-  return fig0
+    # axs[0, 0] = idax
+    axs[0, 0].set_title("Identification Base")
+    # axs[1, 0] = qaax
+    axs[1, 0].set_title("Quantitation Base")
+    # axs[1, 0].sharex(axs[0, 0])
+    # axs[0, 1] = mzax
+    axs[0, 1].set_title("Observed m/z Range")
+    # axs[1, 1] = flax
+    axs[1, 1].set_title("Signal Fluctuations")
+    fig0.tight_layout()
 
-runsticker_pane = pn.pane.Matplotlib(plot_runsticker(df_widget), dpi=250)
+    return fig0
 
-row1 = pn.Row('## Row1', tics_pane, runsticker_pane, styles=dict(background='WhiteSmoke'))
-row2 = pn.Row('## Row2', df_widget, styles=dict(background='WhiteSmoke'))
-col = pn.Column('# Column', row1, row2)
+tics_pane = pn.bind(plot_tics, selection=df_widget.param.selection)
+runsticker_pane = pn.bind(plot_runsticker, selection=df_widget.param.selection)
+
+date_range_slider = pn.widgets.DateRangeSlider(
+    name='Date Range Slider',
+    start=min(df_widget.value.Date), end=max(df_widget.value.Date),
+    value=(min(df_widget.value.Date)+dt.timedelta(days=10), max(df_widget.value.Date)-dt.timedelta(days=10)),
+    step=24*3600*2*1000,
+    callback_throttle=100,
+    tooltips=True,
+)
+
+def plot_metrics_daterange(start,end, selection, data=df_widget):
+  fig0 = Figure(figsize=(18, 10), dpi=250)
+  ax = fig0.subplots()
+  # print("plot_metrics_daterange",start, type(start), end, type(end))
+  if not start or not end:
+    # TODO select up to df_widget_max_select rows/QC2 runs
+    return fig0
+  try:
+    with pn.param.set_values(col[3][2], loading=True):
+      # selection_df = df_widget.value[df_widget.value.Date.between(pd.to_datetime('2017-01-01'),pd.to_datetime('2017-01-19'))]
+      selection_df = data.value[selection+['Date']]
+      selection_df = selection_df[data.value.Date.between(start.date(),end.date())]
+      selection_df.plot.line(x='Date', rot=45, legend=True, linewidth=0.5, ax=ax)
+      ax.set_xlabel("Date")
+      ax.set_ylabel("Absolute Metric Values")
+      ax.set_title("Date Range Metric Values")
+      return fig0
+  except Exception as e:
+    print( e )
+    return fig0
+
+checkbox_group = pn.widgets.CheckBoxGroup(
+    name='Checkbox Group', value=['# MS1', '# MS2'], 
+    options=df_widget.value.columns.drop('Date').to_list(),
+    inline=False
+)
+
+metrics_pane = pn.bind(plot_metrics_daterange, 
+                       start=date_range_slider.param.value_start, end=date_range_slider.param.value_end,
+                       selection=checkbox_group.param.value,)
+
+row1 = pn.Row('## Row1', tics_pane, runsticker_pane)
+row2 = pn.Row('## Row2', df_widget)
+inter_col = pn.Column(date_range_slider, checkbox_group)
+row3 = pn.Row('## Row3', inter_col, metrics_pane)
+col = pn.Column('# Column', row1, row2, row3)
 col.servable()
-
-def update_selection_plots(event):
-  print(event)
-  global col
-  global df_widget
-  global df_widget_plotted_selection
-  if df_widget_plotted_selection == df_widget.selection:
-    return
-  else:
-    df_widget_plotted_selection = df_widget.selection
-    col[1][1] = pn.pane.Matplotlib(plot_tics(df_widget), dpi=250)
-    col[1][2] = pn.pane.Matplotlib(plot_runsticker(df_widget), dpi=250)
-    return
-
-# df_widget.selection.append(1)
-# update_selection_plots(df_widget)
-df_widget.on_click(callback=update_selection_plots)
 
 # !python /home/vscode/.local/bin/panel serve crg_qc2_timeseries.py
