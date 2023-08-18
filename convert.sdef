@@ -1,0 +1,16 @@
+Bootstrap: docker
+From: python:3.8-slim-buster
+
+includecmd: yes
+
+#===
+%post
+#===
+  printf "deb https://deb.debian.org/debian buster main\ndeb https://security.debian.org/debian-security buster/updates main\ndeb https://ftp.debian.org/debian buster-updates main\n" > /etc/apt/sources.list	
+	
+  apt update
+  apt install -q --assume-yes wget unzip git vim gnupg
+
+  pip install -U lxml numpy pandas click pydrive panel matplotlib
+  pip install -U git+https://github.com/MS-Quality-hub/pymzqc.git@v1.0.0rc2
+  pip install -U git+https://github.com/mwalzer/bsub.git
