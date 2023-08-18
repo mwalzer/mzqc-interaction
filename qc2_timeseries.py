@@ -58,6 +58,26 @@ def load_df(mzqc_dict: Dict[str, qc.MzQcFile]):
   df.sort_values(by='Date', inplace = True) 
   return df
 
+def load_pep_df(mzqc_dict: Dict[str, qc.MzQcFile]):
+  xtract = {'Date': next(iter([pd.to_datetime(cd.value) for cd in rowrunmzqc.runQualities[0].metadata.inputFiles[0].fileProperties if cd.accession=="MS:1000747"])),
+            'DF': pd.DataFrame(next(iter([cd.value for cd in rowrunmzqc.runQualities[0].qualityMetrics if cd.accession=="MS:4000078"]))).rename(columns={"MS:1000894": "retention_time",
+                                  "MS:1003169": "peptide",
+                                  "MS:4000072": "dppm",
+                                  "MS:1000041": "charge_state",}),
+            'Name':rowrunname, } for rowrunname, rowrunmzqc in mzqc_dict.items()])
+
+pepmet = next(iter([cd.value for cd in next(iter(next(iter(ds_mzqcs.values())).values())).runQualities[0].qualityMetrics if cd.accession=="MS:"] ))
+# pepmet
+df = pd.DataFrame(pepmet).rename(columns={"MS:1000894": "retention_time",
+                                  "MS:1003169": "peptide",
+                                  "MS:4000072": "dppm",
+                                  "MS:1000041": "charge_state",})
+df['Date'] = metric_date
+df
+  df.Date = df.Date.dt.date
+  df.sort_values(by='Date', inplace = True) 
+  return df
+
 ds_dfs = {dskey: load_df(dskeyruns) for dskey, dskeyruns in ds_mzqcs.items()}
 ds_select = pn.widgets.Select(name='Select Dataset', options=list(ds_dfs.keys()))
 ds_select.value = next(iter(ds_dfs.keys()))  # this is important
