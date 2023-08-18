@@ -14,11 +14,12 @@ import datetime as dt
 
 import panel as pn
 import matplotlib.pyplot as plt
-from matplotlib.figure import Figure
-pn.extension('ipywidgets','tabulator')
+import hvplot.pandas
+pn.extension('tabulator')
 
-mzqc_basepath = "/content/drive/Shareddrives/mzqclib-manuscript/test data/CRG"
+# mzqc_basepath = "/content/drive/Shareddrives/mzqclib-manuscript/test data/CRG"
 # mzqc_basepath = "mzqcs"
+mzqc_basepath = "smalldevset"
 dataset_mid_path = {"Lumos_2017": "PXD019888",
 "Velos_2018": "PXD019889",
 "Lumos_2018": "PXD019891",
@@ -54,6 +55,7 @@ def load_df(mzqc_dict: Dict[str, qc.MzQcFile]):
                       } for rowrunname, rowrunmzqc in mzqc_dict.items()])
 
   df.Date = df.Date.dt.date
+  df.sort_values(by='Date', inplace = True) 
   return df
 
 ds_dfs = {dskey: load_df(dskeyruns) for dskey, dskeyruns in ds_mzqcs.items()}
@@ -70,12 +72,13 @@ df_widget.selectable=df_widget_max_select
 # TODO Does df_widget need to be servable?!?
 
 def plot_tics(selection=[], ds_select=ds_select, ds_mzqcs=ds_mzqcs, ds_dfs=ds_dfs):
-  fig0 = Figure(figsize=(12, 6), dpi=250)
-  ax = fig0.subplots()
-
   if len(selection)==0:
-    # TODO select up to df_widget_max_select rows/QC2 runs
-    return fig0
+    return pd.DataFrame(columns=["Retentiontime [s]","Relative Intensity of Ion Current"]).hvplot.line(title="Total Ion Chromatogram",
+                                                            line_width=0.5, 
+                                                            xlabel="Retentiontime [s]", 
+                                                            ylabel="Relative Intensity of Ion Current",
+                                                            frame_height=500,
+                                                            frame_width=800,)
   
   data = ds_dfs[ds_select.value]
   with pn.param.set_values(col[1][1], loading=True):
@@ -88,46 +91,47 @@ def plot_tics(selection=[], ds_select=ds_select, ds_mzqcs=ds_mzqcs, ds_dfs=ds_df
     selection_tics = [tic.assign(**{"Date":str(d), "Name":n}) for n,d,tic in zip(selection_names,selection_dates,selection_tics)]
 
     tics_df =  pd.pivot(pd.concat(selection_tics), index="MS:1000894", columns="Date", values="MS:1000285")
-    ax = tics_df.interpolate(method='linear').plot.line(legend=True, linewidth=0.5, ax=ax)
-    ax.set_xlabel("Retentiontime [s]")
-    ax.set_ylabel("Relative Intensity of Ion Current")
-    ax.set_title("Total Ion Chromatogramm")
-    return fig0
+    return tics_df.interpolate(method='linear').hvplot.line(legend='top_right', 
+                                                            title="Total Ion Chromatogram", 
+                                                            line_width=0.5, 
+                                                            xlabel="Retentiontime [s]", 
+                                                            ylabel="Relative Intensity of Ion Current",
+                                                            frame_height=500,
+                                                            frame_width=800,)
 
 def plot_runsticker(selection=[], ds_select=ds_select, ds_dfs=ds_dfs):
-  fig0 = Figure(figsize=(8, 6), dpi=250)
-  axs = fig0.subplots(2,2)
-
   if len(selection)==0:
-    # TODO select up to df_widget_max_select rows/QC2 runs
-    return fig0
+    selection_df = pd.DataFrame(columns=['Date','# MS1','# MS2','# ID MS2','# Features','# ID Features', '# Signal fluct. ↓', '# Signal fluct. ↑',])
+    idax = selection_df[['# MS1','# MS2', '# ID MS2', 'Date']].set_index('Date').hvplot.barh(frame_height=200, frame_width=200)
+    qaax = selection_df[['# Features','# ID Features', 'Date']].set_index('Date').hvplot.barh(frame_height=200, frame_width=200)
+    mzax = selection_df.hvplot.line(x="Date", xlabel="m/z Range Setting", ylim=(100,1600),
+                             invert=True, frame_height=200, frame_width=200).opts(yaxis='bare')
+    flax = selection_df[['# Signal fluct. ↓', '# Signal fluct. ↑', 'Date']]\
+            .set_index('Date').astype('int').hvplot.bar(rot=45, frame_height=200, frame_width=200)
+    return (idax + qaax + mzax + flax).cols(1).opts(shared_axes=False)
 
   selection_df = ds_dfs[ds_select.value].iloc[selection]
   with pn.param.set_values(col[1][2], loading=True):
-    idax = selection_df[['# MS1','# MS2', '# ID MS2', 'Date']].set_index('Date').plot.barh(ax=axs[0,0])
-    qaax = selection_df[['# Features','# ID Features', 'Date']].set_index('Date').plot.barh(ax=axs[1,0])
-    # mzax = pd.pivot(selection_df[['mzrange', 'Date']].explode('mzrange', ignore_index=True), columns="Date", values="mzrange").plot.line()
-    mzax = pd.pivot(selection_df[['mzrange', 'Date']]\
-            .reset_index().rename(columns={'index':'xpos'})\
-            .explode('mzrange', ignore_index=True).reset_index(), index=["index","xpos"]\
-            , columns="Date", values="mzrange").reset_index(level=("xpos",))\
-            .plot.line(x="xpos",ax=axs[0,1])
-    mzax.get_xaxis().set_visible(False)
+    idax = selection_df[['# MS1','# MS2', '# ID MS2', 'Date']].set_index('Date').hvplot.barh(frame_width=200, frame_height=200)
+    
+    qaax = selection_df[['# Features','# ID Features', 'Date']].set_index('Date').hvplot.barh(frame_width=200, frame_height=200)
+
+    tmpdf = pd.pivot(selection_df[['mzrange', 'Date']]\
+          .reset_index().rename(columns={'index':'xpos'})\
+          .explode('mzrange', ignore_index=True).reset_index(), index=["index","xpos"]\
+          , columns="Date", values="mzrange").reset_index(level=("xpos",))
+    mzax = tmpdf.hvplot.line(x="xpos",  
+                             xlim=(tmpdf.xpos.min()-0.5,tmpdf.xpos.max()+0.5),
+                             xlabel="m/z Range Setting",
+                             ylim=(100,1600),
+                             invert=True, 
+                             frame_width=200,
+                             frame_height=200).opts(yaxis='bare')
+
     flax = selection_df[['# Signal fluct. ↓', '# Signal fluct. ↑', 'Date']]\
-            .set_index('Date').astype('int').plot.bar(rot=45,ax=axs[1,1])
+            .set_index('Date').astype('int').hvplot.bar(rot=45, frame_width=200, frame_height=200)
 
-    # axs[0, 0] = idax
-    axs[0, 0].set_title("Identification Base")
-    # axs[1, 0] = qaax
-    axs[1, 0].set_title("Quantitation Base")
-    # axs[1, 0].sharex(axs[0, 0])
-    # axs[0, 1] = mzax
-    axs[0, 1].set_title("Observed m/z Range")
-    # axs[1, 1] = flax
-    axs[1, 1].set_title("Signal Fluctuations")
-    fig0.tight_layout()
-
-    return fig0
+    return (idax + qaax + mzax + flax).cols(1).opts(shared_axes=False,)
 
 tics_pane = pn.bind(plot_tics, selection=df_widget.param.selection)
 runsticker_pane = pn.bind(plot_runsticker, selection=df_widget.param.selection)
@@ -139,8 +143,8 @@ date_range_slider = pn.widgets.DateRangeSlider(
     #       next(iter(ds_dfs.values())).Date.max()-dt.timedelta(days=10)),
     value=(next(iter(ds_dfs.values())).Date.min(), 
           next(iter(ds_dfs.values())).Date.max()),
-    step=24*3600*2*1000,
-    callback_throttle=100,
+    # step=24*3600*2*1000,
+    # callback_throttle=100,
     tooltips=True,
 )
 
@@ -151,23 +155,16 @@ checkbox_group = pn.widgets.CheckBoxGroup(
 )
 
 def plot_metrics_daterange(start, end, selection, ds_select=ds_select, ds_dfs=ds_dfs):
-  fig0 = Figure(figsize=(18, 10), dpi=250)
-  ax = fig0.subplots()
   if not start or not end or not selection:
-    return fig0
+    return pd.DataFrame(columns=['Date','# MS1','# MS2',]).hvplot.line(x="Date", title="Date Range Metric Values", ylabel="Absolute Metric Values")
   try:
     with pn.param.set_values(col[3][2], loading=True):
-      
       selection_df = ds_dfs[ds_select.value][selection+['Date']]
       selection_df = selection_df[ds_dfs[ds_select.value].Date.between(start.date(),end.date())]
-      selection_df.plot.line(x='Date', rot=45, legend=True, linewidth=0.5, ax=ax)
-      ax.set_xlabel("Date")
-      ax.set_ylabel("Absolute Metric Values")
-      ax.set_title("Date Range Metric Values")
-      return fig0
+      return selection_df.hvplot.line(x="Date", title="Date Range Metric Values", ylabel="Absolute Metric Values", )
   except Exception as e:
-    print( e )
-    return fig0
+    print( "!!!exception",e )
+    return pd.DataFrame(columns=['Date','# MS1','# MS2',]).hvplot.line(x="Date", title="Date Range Metric Values", ylabel="Absolute Metric Values")
 
 metrics_pane = pn.bind(plot_metrics_daterange, 
                        start=date_range_slider.param.value_start, end=date_range_slider.param.value_end,
@@ -194,5 +191,7 @@ internal_col = pn.Column(date_range_slider, checkbox_group)
 row3 = pn.Row('## Row3', internal_col, metrics_pane)
 col = pn.Column(row0, row1, row2, row3, ds_switch)  # bind must be included to be active
 col.servable()
+
+
 
 # !python /home/vscode/.local/bin/panel serve crg_qc2_timeseries.py
