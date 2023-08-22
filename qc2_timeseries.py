@@ -82,6 +82,7 @@ def load_ds(ds_key, mzqc_paths=mzqc_paths):
   ds_main = pd.DataFrame(dfs_main)
   ds_pep = pd.concat(dfs_peps, axis=0)
   ds_tic = pd.concat(dfs_tics, axis=0)
+  ds_main = ds_main.astype({'Date':'datetime64[ns]'})
   ds_main.sort_values(by='Date', inplace = True) 
   ds_pep.sort_values(by='Date', inplace = True) 
   ds_tic.sort_values(by='Date', inplace = True) 
@@ -179,7 +180,10 @@ def plot_metrics_daterange(start, end, selection, df_widget:pn.widgets.Tabulator
   df = df_widget.value
   truncated = df.loc[:, (df.columns[(df.columns.str.startswith(('#','Date'))) & (df.columns.isin(selection+['Date']))])]
   truncated.sort_values(by='Date', inplace = True)
-  line_plot = truncated[(truncated.Date >= start) & (truncated.Date <= end)].hvplot.line(x='Date', title='Line Plot')
+  print("df", type(truncated.Date[0]))  
+  print("df*", type(truncated.Date.dt.date[0]))
+  print("slider", type(start))
+  line_plot = truncated[(truncated.Date >=  start) & (truncated.Date <=  end)].hvplot.line(x='Date', title='Line Plot')
   line_plot = df.hvplot.line(x='Date', title='Single Value Metrics')
   return line_plot
 
@@ -194,7 +198,7 @@ def plot_ccharts(start, end, df_widget:pn.widgets.Tabulator=df_widget):
   
   pep_df = df_widget.peps
 
-  filtered_pep_df = pep_df[(pep_df['Date'] >= start) & (pep_df['Date'] <= end)]
+  filtered_pep_df = pep_df[(pep_df['Date'] >=  pd.Timestamp(start)) & (pep_df['Date'] <=  pd.Timestamp(end))]
   filtered_pep_df_means = pd.DataFrame({
       "dRT": filtered_pep_df.groupby(['Date','Name'])['dRT'].mean(),
       "dPPM": filtered_pep_df.groupby(['Date','Name'])['dPPM'].mean(),
@@ -254,7 +258,33 @@ def update_ds_pep_stats(df_widget:pn.widgets.Tabulator=df_widget):
   }
   setattr(df_widget, 'peps_mean', pep_df_mean)
 
-def update_ds(ds_key, mzqc_paths=mzqc_paths, df_widget:pn.widgets.Tabulator=df_widget,
+descr_templ = """
+# The Data Set
+
+This dataset ({p}) is comprised of mzQC files from {n} runs,
+
+which were measured over the timecourse between {s} and {e}, 
+
+from QC2 samples on an instrument of type {i}.
+
+You can in inspect the details in the following interactive charts.
+"""
+ds_descriptor = pn.pane.Markdown(descr_templ.format(s=str(dt.datetime.now().date()),
+                                                               e=str(dt.datetime.now().date()),
+                                                               p="PXD------",
+                                                               n=str(len([])),
+                                                               i="<Make> <Model>"))
+
+def plot_calendar_hist(df_widget_df:pd.DataFrame=df_widget.value):
+  calendar_hist = df_widget_df.assign(month=df_widget_df.Date.dt.month)\
+        .groupby(by=['month']).count().hvplot.bar(y="Date")\
+        .opts(title="QC2 Run Yearly Distribution", ylabel="# Runs",
+              xlabel="Month of {}".format(next(iter(ds_main.Date.dt.year))))
+  return calendar_hist
+
+calendar_hist_pane = pn.bind(plot_calendar_hist, df_widget_df=df_widget.param.value,)
+
+def update_ds(ds_key, mzqc_paths=mzqc_paths, df_widget:pn.widgets.Tabulator=df_widget, ds_descriptor=ds_descriptor,
               date_range_slider:pn.widgets.DateRangeSlider=date_range_slider, checkbox_group:pn.widgets.CheckBoxGroup=checkbox_group):
   # sanity check
   if ds_key not in mzqc_paths.keys() or\
@@ -278,17 +308,24 @@ def update_ds(ds_key, mzqc_paths=mzqc_paths, df_widget:pn.widgets.Tabulator=df_w
   date_range_slider.start=main.Date.min()
   date_range_slider.end=main.Date.max()
   date_range_slider.value=(main.Date.min(), main.Date.max())
+
+  ds_descriptor.value = descr_templ.format(s=str(main.Date.min().date()),
+                                                               e=str(main.Date.max().date()),
+                                                               p=dataset_mid_path[ds_key],
+                                                               n=str(len(main)),
+                                                               i="Thermo {}".format(next(iter(ds_key.split('_')))))
   return
 
 ds_switch = pn.bind(update_ds, ds_key=ds_select.param.value, df_widget=df_widget, date_range_slider=date_range_slider, checkbox_group=checkbox_group, )
 
-row0 = pn.Row('# Column Explore', ds_select)
-row1 = pn.Row('## Row1', tics_pane, runsticker_pane)
-row2 = pn.Row('## Row2', df_widget)
+row0 = pn.Row(ds_select)
+row1 = pn.Row(ds_descriptor, calendar_hist_pane)
+row2 = pn.Row(df_widget)
+row3 = pn.Row(tics_pane, runsticker_pane)
 internal_col = pn.Column(date_range_slider, checkbox_group)
-row3 = pn.Row('## Row3', internal_col, metrics_pane)
-row4 = pn.Row('## Row4', cchart_pane)
-col = pn.Column(row0, row1, row2, row3, row4, ds_switch)  # bind must be included to be active
+row4 = pn.Row(internal_col, metrics_pane)
+row5 = pn.Row(tabs = pn.Tabs(('Xbar control chart',cchart_pane), tabs_location='left'))   #,('Rbar control chart', cchart_pane)
+col = pn.Column(row0, row1, row2, row3, row4, row5, ds_switch)  # bind must be included to be active
 col.servable()
 
 
