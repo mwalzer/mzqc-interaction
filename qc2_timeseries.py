@@ -58,12 +58,53 @@ checkbox_group = None
 ds_descriptor = None
 current_dataset = dataset()
 
-def extract_date(rowrunmzqc: qc.MzQcFile):
+def extract_date(rowrunmzqc: qc.MzQcFile) -> pd.Timestamp:
+  """extracts a time object from a mzQC object
+
+  Parameters
+  ----------
+  rowrunmzqc : qc.MzQcFile
+      the mzQC object to load the run date from (expects "MS:1000747" to be present)
+
+  Returns
+  -------
+  pd.Timestamp
+      a pandas Timestamp; takes the first run found in the mzQC object.
+
+      Picks the date source data from the completion time from the first run in the mzQC object.
+      TODO pick the run by provided name and fail gracefully if not found.
+
+  """
   rawdate = next(iter([pd.to_datetime(cd.value) for cd in rowrunmzqc.runQualities[0].metadata.inputFiles[0].fileProperties if cd.accession=="MS:1000747"]))
   return pd.Timestamp(rawdate)
 
-def load_main_from_mzqc(rowrunname: str, rowrunmzqc: qc.MzQcFile):
-  return {'Date': extract_date(rowrunmzqc),
+def load_main_from_mzqc(rowrunname: str, rowrunmzqc: qc.MzQcFile) -> pd.DataFrame:
+  """loads a single values QC metric dataframe from a mzQC object
+
+  Parameters
+  ----------
+  rowrunname : str
+      the run name for the contents of the respective mzQC object
+  rowrunmzqc : qc.MzQcFile
+      the mzQC object to load the tics from (expects "MS:4000059","MS:4000060","MS:1003251",
+      "MS:1003250","MS:1003328","MS:1002404","MS:4000102","MS:4000103","MS:4000097","MS:4000098",
+      "MS:4000070","MS:4000069","MS:4000069" to be present)
+
+      Takes the first run found in the mzQC object.
+      TODO pick the run by provided name and fail gracefully if not found.
+
+  Returns
+  -------
+  pd.DataFrame
+      single row dataframe; columns=['# MS1','# MS2','# ID MS2','# Peptidoforms',
+      '# Proteoforms','# Proteins','# Features','# ID Features',u'# Signal fluct. ↑'
+      ,u'# Signal fluct. ↓','RT range','MZ range','mzrange','Name'
+
+  See Also
+  --------
+  extract_date : Defines the type of the Date column.
+  """
+  df = pd.DataFrame({'Date': extract_date(rowrunmzqc),
           '# MS1': next(iter([cd.value for cd in rowrunmzqc.runQualities[0].qualityMetrics if cd.accession=="MS:4000059"])),
           '# MS2': next(iter([cd.value for cd in rowrunmzqc.runQualities[0].qualityMetrics if cd.accession=="MS:4000060"])),
           '# ID MS2': next(iter([cd.value for cd in rowrunmzqc.runQualities[0].qualityMetrics if cd.accession=="MS:1003251"])),
@@ -77,16 +118,68 @@ def load_main_from_mzqc(rowrunname: str, rowrunmzqc: qc.MzQcFile):
           'RT range': str(next(iter([cd.value for cd in rowrunmzqc.runQualities[0].qualityMetrics if cd.accession=="MS:4000070"]))),
           'MZ range': str(next(iter([cd.value for cd in rowrunmzqc.runQualities[0].qualityMetrics if cd.accession=="MS:4000069"]))),
           'mzrange': next(iter([cd.value for cd in rowrunmzqc.runQualities[0].qualityMetrics if cd.accession=="MS:4000069"])),
-          'Name':rowrunname,}
+          'Name':rowrunname,})
+  return df
 
-def load_tic_from_mzqc(rowrunname: str, rowrunmzqc: qc.MzQcFile):
+def load_tic_from_mzqc(rowrunname: str, rowrunmzqc: qc.MzQcFile) -> pd.DataFrame:
+  """loads a tic dataframe from a mzQC file object
+
+  Parameters
+  ----------
+  rowrunname : str
+      the run name for the contents of the respective mzQC object
+  rowrunmzqc : qc.MzQcFile
+      the mzQC files object to load the tics from (expects "MS:4000104" to be present)
+
+      Creates the obvious cols of "RT"("MS:1000894"), "Intensity" ("MS:1000285"), "# Peak"("MS:1003059"), "NativeID"("MS:1000767"),
+      but also 3 convenience cols: "Date" (taken from the mzQC), "Name" (as provided by the fn param, to keep the data adressable 
+      after merging with all the other tic dataframes, same for Date), and "Date .. Name" as contraction of the date and the last 
+      10 characters of the run name for convenient legend display if there are more than one run on the date.
+      
+      Takes the first run found in the mzQC.
+      TODO pick the run by provided name and fail gracefully if not found
+
+  Returns
+  -------
+  pd.DataFrame 
+      dataframe as produced above; columns=['RT', 'Intensity', 'Date', 'Name', 'Date .. Name']
+
+  See Also
+  --------
+  extract_date : Defines the type of the Date column.
+  """
   date = extract_date(rowrunmzqc)
   tics = pd.DataFrame(next(iter([m.value for m in rowrunmzqc.runQualities[0].qualityMetrics if m.accession=="MS:4000104"])))\
               .rename(columns={"MS:1000894": "RT", "MS:1000285": "Intensity", "MS:1003059": "# Peak", "MS:1000767": "NativeID"})\
-              .assign(**{"Date":date, "Name":rowrunname})
+              .assign(**{"Date":date, "Name":rowrunname, "Date .. Name": date.dt.strftime('%Y-%m-%d') + rowrunname[-10:]})
   return tics
   
-def load_peps_from_mzqc(rowrunname: str, rowrunmzqc: qc.MzQcFile):
+def load_peps_from_mzqc(rowrunname: str, rowrunmzqc: qc.MzQcFile) -> pd.DataFrame:
+  """loads a QC peptides dataframe from a mzQC file object
+
+  Parameters
+  ----------
+  rowrunname : str
+      the run name for the contents of the respective mzQC object
+  rowrunmzqc : qc.MzQcFile
+      the mzQC files object to load the tics from (expects "MS:4000078" to be present)
+  
+      Creates the obvious cols of "RT"("MS:1000894"), "Peptide" ("MS:1003169"), "dPPM"("MS:1003059"), "Chargestate"("MS:1000041"),
+      but also 2 convenience cols: "Date" (taken from the mzQC), "Name" (as provided by the fn param, to keep the data adressable 
+      after merging with all the other pep dataframes, same for Date).
+      
+      Takes the first run found in the mzQC.
+      TODO pick the run by provided name and fail gracefully if not found
+
+  Returns
+  -------
+  pd.DataFrame
+      dataframe as produced above; columns=['RT','Peptide', 'dPPM', '# Chargestates', 'Date', 'Name']
+
+  See Also
+  --------
+  extract_date : Defines the type of the Date column.
+  """
   date = extract_date(rowrunmzqc)
   df = pd.DataFrame(next(iter([cd.value for cd in rowrunmzqc.runQualities[0].qualityMetrics if cd.accession=="MS:4000078"])))\
               .rename(columns={"MS:1000894": "RT",
@@ -98,12 +191,39 @@ def load_peps_from_mzqc(rowrunname: str, rowrunmzqc: qc.MzQcFile):
   df[["RT", "dPPM"]] = df[["RT", "dPPM"]].astype('float')
   return df
 
-def load_ds(ds_key: str, mzqc_paths: Dict[str,str], dataset: dataset, ):
+def load_ds(ds_key: str, mzqc_paths: Dict[str,List[str]], dataset: dataset):
+  """loads all the mzQC objects from a given project and updates a dataset object with the produced dataframes
+
+  Parameters
+  ----------
+  ds_key : str
+      the dataset key to the mzqc_paths parameter
+  mzqc_paths : Dict[str,List[str]]
+      the dict of lists for all mzQC files from the respective dataset
+  dataset : dataset
+      the dataset object to be updated
+
+      Adds a "dRT" column to the peps dataframe which is the retention time delta of the 
+      respective peptide in a given run from the datasets mean retention time of that peptide.
+      Updates the dataset object with further statistical information on the QC peptides in two 
+      dicts (for the mean and the standard deviation of the respective) values of:
+        "dRT": deviations from the whole-dataset mean of the respective peptides' retention time,
+        "dPPM": mass deviations of QC peptides found,
+        "# Chargestates": number of unique charge states in which the QC peptides were found per run,
+        "# Identified QC2 Peptides": number of QC2 peptides identified per run,
+      All dataframes are sorted by Date.
+      
+  See Also
+  --------
+  load_main_from_mzqc : Defines the dataframe for single value metrics.
+  load_tic_from_mzqc : Defines the dataframe for ion chromatography metrics.
+  load_peps_from_mzqc : Defines the dataframe for QC2 peptide metrics.
+  """
+  # adds 'dRT','# Identified QC2 Peptides' to pep?
   if ds_key not in mzqc_paths.keys():
     print("ds_key not in mzqc_paths.")
     return
   print(">>>updating with {}".format(ds_key))
-
 
   dfs_main = list()
   dfs_tics = list()
@@ -115,7 +235,7 @@ def load_ds(ds_key: str, mzqc_paths: Dict[str,str], dataset: dataset, ):
         dfs_main.append(load_main_from_mzqc(name, mzqcobj))
         dfs_tics.append(load_tic_from_mzqc(name, mzqcobj))
         dfs_peps.append(load_peps_from_mzqc(name,mzqcobj))
-  dataset.main = pd.DataFrame(dfs_main)
+  dataset.main = pd.concat(dfs_main, axis=0)
   dataset.peps = pd.concat(dfs_peps, axis=0)
   dataset.tics = pd.concat(dfs_tics, axis=0)
   dataset.peps = pd.merge(dataset.peps, pd.DataFrame(
@@ -171,6 +291,9 @@ def plot_tics(selection:List[int], dataset:dataset):
                                     title="Total Ion Chromatogram",
                                     xlabel="Retentiontime [s]", ylabel="Relative Intensity of Ion Current",
                                     frame_height=500, frame_width=800,).overlay()
+    
+    print("!!!: selected_tic[dataset.tics]\n",selected_tic.columns)
+
     return plot 
 
 def plot_runsticker(selection:List[int], dataset:dataset):
@@ -207,6 +330,9 @@ def plot_runsticker(selection:List[int], dataset:dataset):
                              frame_height=200).opts(yaxis='bare')
     flax = selection_df[['# Signal fluct. ↓', '# Signal fluct. ↑', 'Date']]\
             .set_index('Date').astype('int').hvplot.bar(rot=45, frame_width=200, frame_height=200)
+    
+    print("!!!: selection_df[dataset.main]\n",selection_df.columns)
+ 
     return (idax + qaax + mzax + flax).cols(2).opts(shared_axes=False,)
 
 def plot_metrics_daterange(start:dt.datetime, end:dt.datetime, selection:List[str], dataset:dataset):
@@ -222,16 +348,15 @@ def plot_metrics_daterange(start:dt.datetime, end:dt.datetime, selection:List[st
     (dataset.main.columns.str.startswith(('#','Date'))) & (dataset.main.columns.isin(selection+['Date']))
     ])]
   truncated.sort_values(by='Date', inplace = True)
-  print("df", type(truncated.Date[0]))  
-  print("slider", type(start),start,end)
   truncated = truncated[(truncated.Date.dt.date >= start.date()) & (truncated.Date.dt.date <= end.date())]
-  print(truncated)
   if truncated.shape[0] == 0:
     return pd.DataFrame(columns=["Date","Value"]).hvplot.line(xlabel='Date', title='Single Metrics Timeseriesplot')
 
   truncated.Date = truncated.Date.dt.date
   line_plot = truncated.hvplot.line(x='Date', title='Single Metrics Timeseriesplot')
-  print("boingboing")
+  
+  print("!!!: truncated[dataset.main]\n",truncated.columns)
+
   return line_plot
 
 def plot_ccharts(start, end, dataset:dataset):
@@ -277,6 +402,8 @@ def plot_ccharts(start, end, dataset:dataset):
              default_tools=[], active_tools=[], tools=['wheel_zoom', 'save', 'reset', 'hover'],toolbar='above')
     figs.append(fig)
 
+  print("!!! plot_ccharts: filtered_pep_df_means[filtered_pep_df[dataset.peps]]\n",filtered_pep_df_means.columns)
+
   layout = hv.Layout(figs).cols(2).opts(shared_axes=False)
   return layout
 
@@ -295,6 +422,9 @@ def plot_calendar_hist(dataset:dataset):
         .groupby(by=['month']).count().hvplot.bar(y="Date")\
         .opts(title="QC2 Run Yearly Distribution", ylabel="# Runs",
               xlabel="Month of {}".format(next(iter(dataset.main.Date.dt.year))))
+  
+  print("!!! plot_calendar_hist: dataset.main\n",dataset.main.columns)
+
   return calendar_hist
 
 def update_from_ds_load(dataset:dataset):
