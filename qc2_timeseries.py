@@ -571,36 +571,34 @@ app_col = None
 def update_ds(ds_key: str, mzqc_paths: Dict[str,str]):
   global app_col
   global ds_switch
-
-  current_dataset = load_ds(ds_key=ds_key, mzqc_paths=mzqc_paths)
-  current_panels = dataset_panels(current_dataset)
-  
-  row1 = pn.Row(current_panels.ds_descriptor, current_panels.calendar_hist_pane)
-  row2 = pn.Row(current_panels.df_widget)
-  row3 = pn.Row(current_panels.tics_pane, current_panels.runsticker_pane)
-  internal_col = pn.Column(current_panels.date_range_slider, 
-                           current_panels.checkbox_group)
-  row4 = pn.Row(internal_col, current_panels.metrics_pane)
-  row5 = pn.Row(tabs = pn.Tabs(current_panels.cchart_pane, tabs_location='left'))   # TODO ,('Rbar control chart', cchart_pane)
-  # app_col[0]=ds_switch
   if app_col:
-    app_col[1:]=[row1,row2,row3,row4,row5]
+    with pn.param.set_values(app_col[1], loading=True),\
+        pn.param.set_values(app_col[2], loading=True),\
+        pn.param.set_values(app_col[3], loading=True),\
+        pn.param.set_values(app_col[4], loading=True),\
+        pn.param.set_values(app_col[5], loading=True):
+      current_dataset = load_ds(ds_key=ds_key, mzqc_paths=mzqc_paths)
+      current_panels = dataset_panels(current_dataset)
+      row1 = pn.Row(current_panels.ds_descriptor, current_panels.calendar_hist_pane)
+      row2 = pn.Row(current_panels.df_widget)
+      row3 = pn.Row(current_panels.tics_pane, current_panels.runsticker_pane)
+      internal_col = pn.Column(current_panels.date_range_slider, 
+                              current_panels.checkbox_group)
+      row4 = pn.Row(internal_col, current_panels.metrics_pane)
+      row5 = pn.Row(tabs = pn.Tabs(current_panels.cchart_pane, tabs_location='left'))   # TODO ,('Rbar control chart', cchart_pane)
+      app_col[1:]=[row1,row2,row3,row4,row5]
 
 ds_switch = pn.bind(update_ds, 
                     ds_key=ds_select.param.value, 
                     mzqc_paths=mzqc_paths)
 
-app_col = pn.Column(pn.Row("#QC2 View",ds_select,ds_switch,styles=dict(background='Red')), 
+app_col = pn.Column(pn.Row(pn.pane.Markdown(name="Dataset descriptor", object="# QC2 View"),
+                           ds_select,ds_switch), 
                     pn.Row(), pn.Row(), pn.Row(), pn.Row(), pn.Row())
-# for i in range(1,6):
-#   app_col.append(pn.Row())
 
 app_col.servable(title="QC2")
 update_ds(ds_key=next(iter(list(mzqc_paths.keys()))),mzqc_paths=mzqc_paths)
 print("appcol",app_col,"\nlen ",len(app_col))
-#TODO
-#https://discourse.holoviz.org/t/how-can-i-replace-part-of-a-panel-via-a-selection-change-in-a-bokeh-figure/701/6
-
 
 # ! python /home/vscode/.local/bin/panel serve crg_qc2_timeseries.py
 # ! panel serve qc2_timeseries.py
