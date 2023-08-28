@@ -180,7 +180,7 @@ def load_tic_from_mzqc(rowrunname: str, rowrunmzqc: qc.MzQcFile) -> pd.DataFrame
   date = extract_date(rowrunmzqc)
   tics = pd.DataFrame(next(iter([m.value for m in rowrunmzqc.runQualities[0].qualityMetrics if m.accession=="MS:4000104"])))\
               .rename(columns={"MS:1000894": "RT", "MS:1000285": "Intensity", "MS:1003059": "# Peak", "MS:1000767": "NativeID"})\
-              .assign(**{"Date":date, "Name":rowrunname, "Date .. Name": date.strftime('%Y-%m-%d') + rowrunname[-10:]})
+              .assign(**{"Date":date, "Name":rowrunname, "Date .. Name": date.strftime('%Y-%m-%d') + " .. " + rowrunname[-10:]})
   return tics
   
 def load_peps_from_mzqc(rowrunname: str, rowrunmzqc: qc.MzQcFile) -> pd.DataFrame:
@@ -327,7 +327,7 @@ def plot_tics(selection:List[str], data:pd.DataFrame) -> hvplot.hvPlot:
                                                             xlabel="Retentiontime [s]", 
                                                             ylabel="Relative Intensity of Ion Current",
                                                             frame_height=500,
-                                                            frame_width=800,)
+                                                            frame_width=1000,) * hv.Text(.5,.5,"Select Run\nfrom Table", fontsize=24,).opts(color='grey')
   
   qc2log.debug("plot_tics in ernest")
   # with pn.param.set_values(col[3][0], loading=True):
@@ -337,7 +337,7 @@ def plot_tics(selection:List[str], data:pd.DataFrame) -> hvplot.hvPlot:
     plot = selected_tic.hvplot.line(x="RT",y="Intensity", by=["Date .. Name"],
                                     title="Total Ion Chromatogram",
                                     xlabel="Retentiontime [s]", ylabel="Relative Intensity of Ion Current",
-                                    frame_height=500, frame_width=800,).opts(shared_axes=False)
+                                    frame_height=500, frame_width=1000,).opts(shared_axes=False)
     return plot 
 
 def indices_to_names_to_plot_tics(selection_indices:List[int], selection_dataset:dataset) -> hvplot.hvPlot:
@@ -384,29 +384,28 @@ def plot_runsticker(selection:List[int], data:pd.DataFrame) -> hv.Layout:
   qc2log.debug("plot_runsticker")
   if (data.shape[0] == 0) or\
      (len(selection)==0):
-    selection_df = pd.DataFrame(columns=['Date','# MS1','# MS2','# ID MS2','# Features','# ID Features', u'# Signal fluct. ↓', u'# Signal fluct. ↑',])
-    idax = selection_df[['# MS1','# MS2', '# ID MS2', 'Date']].set_index('Date').hvplot.barh(frame_height=200, frame_width=200)
-    qaax = selection_df[['# Features','# ID Features', 'Date']].set_index('Date').hvplot.barh(frame_height=200, frame_width=200)
-    mzax = selection_df.hvplot.line(x="Date", xlabel="m/z Range Setting", ylim=(100,1600),
-                             invert=True, frame_height=200, frame_width=200).opts(yaxis='bare')
-    flax = selection_df[[u'# Signal fluct. ↓', u'# Signal fluct. ↑', 'Date']]\
-            .set_index('Date').astype('int').hvplot.bar(rot=45, frame_height=200, frame_width=200)
-    return (idax + qaax + mzax + flax).cols(2).opts(shared_axes=False)
+    blank = pd.DataFrame(columns=['Date','Counts', 'Ranges']).set_index('Date')\
+      .hvplot.line(frame_height=200, frame_width=200).opts(xaxis='bare', yaxis='bare') * hv.Text(.5,.5, 'Select Runs \n from Table').opts(color='grey')
+    return (blank + blank + blank + blank).cols(4).opts(shared_axes=False, toolbar='right', title='Counts & Ranges')
 
   qc2log.debug("plot_runsticker in ernest")
   # with pn.param.set_values(col[3][1], loading=True):
   while True:
     selection_df = data.iloc[selection].copy()
-    idax = selection_df[['# MS1','# MS2', '# ID MS2', 'Date']].set_index('Date').hvplot.barh(frame_width=200, frame_height=200)
-    qaax = selection_df[['# Features','# ID Features', 'Date']].set_index('Date').hvplot.barh(frame_width=200, frame_height=200)
+    selection_df.Date = selection_df.Date.dt.date
+    idax = selection_df[['# MS1','# MS2', '# ID MS2', 'Date']].set_index('Date').hvplot.barh(
+      frame_width=200, frame_height=200, xlabel='', ylabel="Count", title="Spectrum Counts")
+    qaax = selection_df[['# Features','# ID Features', 'Date']].set_index('Date').hvplot.barh(
+      frame_width=200, frame_height=200, xlabel='', ylabel="Count", title="Feature Counts")
     mzax = pd.melt(selection_df[['MZ range left', 'MZ range right', 'Date .. Name']].reset_index(), 
                   id_vars=['Date .. Name','index'], value_vars=['MZ range left','MZ range right']).hvplot.line(
                               x='value', y='index', by='Date .. Name', 
-                              xlabel="m/z Range Setting", 
-                              frame_width=200, frame_height=200).opts(yaxis='bare')
+                              xlabel="m/z Range Setting", line_width=12,
+                              frame_width=200, frame_height=200).opts(yaxis='bare', title="Acquisition Range")
     flax = selection_df[[u'# Signal fluct. ↓', u'# Signal fluct. ↑', 'Date']]\
-            .set_index('Date').astype('int').hvplot.bar(rot=45, frame_width=200, frame_height=200)
-    return (idax + qaax + mzax + flax).cols(2).opts(shared_axes=False)
+            .set_index('Date').astype('int').hvplot.barh(
+                frame_width=200, frame_height=200, xlabel='', ylabel="Count", title="Signal fluctuations")
+    return (idax + qaax + mzax + flax).cols(4).opts(shared_axes=False, toolbar='right')
 
 def plot_metrics_daterange(start:dt.datetime, end:dt.datetime, selection:List[str], data:pd.DataFrame, data_meta:pd.DataFrame) -> hvplot.hvPlot:
   """plots the selection of single value metrics over a selected daterange
@@ -457,7 +456,9 @@ def plot_metrics_daterange(start:dt.datetime, end:dt.datetime, selection:List[st
   truncated_meta = data_meta[(data_meta.Date.dt.date >= start.date()) & (data_meta.Date.dt.date <= end.date())]
   annotations = [hv.VLine(a) for a in truncated_meta.Date.dt.date.to_list()]
 
-  return hv.Overlay([line_plot] + annotations).opts(hv.opts.VLine(line_width=0.2, line_dash='dashed', color='#0096FF')).opts(shared_axes=False)
+  return hv.Overlay([line_plot] + annotations).opts(
+    hv.opts.VLine(line_width=0.2, line_dash='dashed', color='#0096FF')
+    ).opts(shared_axes=False, frame_height=400, frame_width=800)
 
 def plot_ccharts(start:dt.datetime, end:dt.datetime, data_peps:pd.DataFrame, 
                  peps_mean: Dict[str,float], peps_std: Dict[str,float]) -> hv.Layout:
@@ -523,7 +524,7 @@ def plot_ccharts(start:dt.datetime, end:dt.datetime, data_peps:pd.DataFrame,
     fig = hspans_t0 * hspans_t1 * hspans_t2 * hspans_b0 * hspans_b1 * hspans_b2 * hline * \
       filtered_pep_df_means.hvplot.line(y=metric_name, title= metric_name + " per day mean cchart")
     fig.opts(ylim=(peps_mean[metric_name]-3*peps_std[metric_name], peps_mean[metric_name]+3*peps_std[metric_name]),
-             default_tools=[], active_tools=[], tools=['wheel_zoom', 'save', 'reset', 'hover'],toolbar='above')
+             default_tools=[], active_tools=[], tools=['wheel_zoom', 'save', 'reset', 'hover'])
     figs.append(fig)
   layout = hv.Layout(figs).cols(2).opts(shared_axes=False)
   return layout
@@ -607,19 +608,26 @@ def update_ds(ds_key: str, mzqc_paths: Dict[str,str]):
         pn.param.set_values(app_col[2], loading=True),\
         pn.param.set_values(app_col[3], loading=True),\
         pn.param.set_values(app_col[4], loading=True),\
-        pn.param.set_values(app_col[5], loading=True):
+        pn.param.set_values(app_col[5], loading=True),\
+        pn.param.set_values(app_col[6], loading=True):
       current_dataset = load_ds(ds_key=ds_key, mzqc_paths=mzqc_paths, metadata_paths=metadata_paths)
       current_panels = dataset_panels(current_dataset)
-      row1 = pn.Row(current_panels.ds_descriptor, current_panels.calendar_hist_pane)
+      row1 = pn.Row(current_panels.ds_descriptor,
+                    pn.Spacer(width=100, height=300), 
+                    current_panels.calendar_hist_pane, align='center')
       row2 = pn.Row(current_panels.df_widget)
-      row3 = pn.Row(current_panels.tics_pane, current_panels.runsticker_pane)
+      row3 = pn.Row(current_panels.tics_pane)
+      row4 = pn.Row(pn.Spacer(width=20, height=300), 
+                    current_panels.runsticker_pane)
       internal_col = pn.Column(current_panels.date_range_slider, 
                               current_panels.checkbox_group)
-      row4 = pn.Row(internal_col, current_panels.metrics_pane)
-      row5 = pn.Row(pn.Tabs(('Xbar chart',current_panels.cchart_pane), 
+      row5 = pn.Row(pn.Spacer(width=150, height=300), 
+                    internal_col, 
+                    current_panels.metrics_pane)
+      row6 = pn.Row(pn.Tabs(('Xbar chart',current_panels.cchart_pane), 
                             ('Rbar chart',pn.Row(current_panels.cchart_pane)),  
                             tabs_location='left'))   # TODO ,('Rbar chart', !cchart_pane)
-      app_col[1:]=[row1,row2,row3,row4,row5]
+      app_col[1:]=[row1,row2,row3,row4,row5,row6]
 
 ds_switch = pn.bind(update_ds, 
                     ds_key=ds_select.param.value, 
@@ -627,9 +635,10 @@ ds_switch = pn.bind(update_ds,
 
 app_col = pn.Column(pn.Row(pn.pane.Markdown(name="Dataset descriptor", object="# QC2 View"),
                            ds_select,ds_switch), 
-                    pn.Row(pn.Spacer(styles=dict(background='WhiteSmoke'), sizing_mode='stretch_both'), height=200, width=800), 
-                    pn.Row(pn.Spacer(styles=dict(background='WhiteSmoke'), sizing_mode='stretch_both'), height=200, width=800), 
-                    pn.Row(pn.Spacer(styles=dict(background='WhiteSmoke'), sizing_mode='stretch_both'), height=200, width=800), 
-                    pn.Row(pn.Spacer(styles=dict(background='WhiteSmoke'), sizing_mode='stretch_both'), height=200, width=800), 
-                    pn.Row(pn.Spacer(styles=dict(background='WhiteSmoke'), sizing_mode='stretch_both'), height=200, width=800))
+                    pn.Row(pn.Spacer(styles=dict(background='WhiteSmoke'), sizing_mode='stretch_both'), height=200, width=1000), 
+                    pn.Row(pn.Spacer(styles=dict(background='WhiteSmoke'), sizing_mode='stretch_both'), height=200, width=1000), 
+                    pn.Row(pn.Spacer(styles=dict(background='WhiteSmoke'), sizing_mode='stretch_both'), height=200, width=1000), 
+                    pn.Row(pn.Spacer(styles=dict(background='WhiteSmoke'), sizing_mode='stretch_both'), height=200, width=1000), 
+                    pn.Row(pn.Spacer(styles=dict(background='WhiteSmoke'), sizing_mode='stretch_both'), height=200, width=1000), 
+                    pn.Row(pn.Spacer(styles=dict(background='WhiteSmoke'), sizing_mode='stretch_both'), height=200, width=1000))
 app_col.servable(title="QC2 Dashboard")
