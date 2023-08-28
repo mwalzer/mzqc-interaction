@@ -5,6 +5,7 @@ import datetime as dt
 from typing import Dict, List
 from dataclasses import dataclass, field
 import logging
+import json
 
 import pandas as pd
 from mzqc import MZQCFile as qc
@@ -46,6 +47,7 @@ class dataset:
   main: pd.DataFrame
   tics: pd.DataFrame 
   peps: pd.DataFrame
+  meta: pd.DataFrame
   label: str
   instrument: str
   peps_std: Dict[str,float] = field(default_factory=dict)
@@ -218,7 +220,7 @@ def load_peps_from_mzqc(rowrunname: str, rowrunmzqc: qc.MzQcFile) -> pd.DataFram
   df[["RT", "dPPM"]] = df[["RT", "dPPM"]].astype('float')
   return df
 
-def load_ds(ds_key: str, mzqc_paths: Dict[str,List[str]]) -> dataset:
+def load_ds(ds_key: str, mzqc_paths: Dict[str,List[str]], metadata_paths: Dict[str,List[str]]) -> dataset:
   """loads all the mzQC files from a given project and creates a dataset representation
 
   Parameters
@@ -254,13 +256,23 @@ def load_ds(ds_key: str, mzqc_paths: Dict[str,List[str]]) -> dataset:
     with open(mzqc_path, "r") as file:
         mzqcobj = qc.JsonSerialisable.FromJson(file)
         name = os.path.basename(mzqc_path)
-        dfs_main.append(load_main_from_mzqc(name, mzqcobj))
+        dfs_main.append(load_main_from_mzqc(name,mzqcobj))
         dfs_tics.append(load_tic_from_mzqc(name, mzqcobj))
         dfs_peps.append(load_peps_from_mzqc(name,mzqcobj))
-  
+
+  with open(metadata_paths.get(ds_key, None), "r") as file:
+    df_meta = pd.DataFrame(json.load(file)).\
+      rename(columns={"user_date": "Date", "user_email": "Contact", 
+                      "additional_information": "Additional_Information", 
+                      "problems": "Problems",
+                      "actions": "Actions"})
+    df_meta.Date = df_meta.Date.astype('datetime64[ns]')
+    df_meta.Actions = df_meta.Actions.apply(lambda x: '&'.join([y.get('name',None) for y in x]))
+
   return dataset(main = pd.concat(dfs_main, axis=0, ignore_index=True).sort_values(by='Date'), 
                 peps = pd.concat(dfs_peps, axis=0, ignore_index=True).sort_values(by='Date'),
                 tics = pd.concat(dfs_tics, axis=0, ignore_index=True).sort_values(by='Date'),
+                meta =  df_meta.sort_values(by='Date'),
                 label = dataset_mid_path[ds_key], 
                 instrument = "Thermo {}".format(next(iter(ds_key.split('_')))))
 
@@ -396,7 +408,7 @@ def plot_runsticker(selection:List[int], data:pd.DataFrame) -> hv.Layout:
             .set_index('Date').astype('int').hvplot.bar(rot=45, frame_width=200, frame_height=200)
     return (idax + qaax + mzax + flax).cols(2).opts(shared_axes=False)
 
-def plot_metrics_daterange(start:dt.datetime, end:dt.datetime, selection:List[str], data:pd.DataFrame) -> hvplot.hvPlot:
+def plot_metrics_daterange(start:dt.datetime, end:dt.datetime, selection:List[str], data:pd.DataFrame, data_meta:pd.DataFrame) -> hvplot.hvPlot:
   """plots the selection of single value metrics over a selected daterange
 
   Parameters
@@ -413,6 +425,11 @@ def plot_metrics_daterange(start:dt.datetime, end:dt.datetime, selection:List[st
         '# Proteins', '# Features', '# ID Features', u'# Signal fluct. ↑',
         u'# Signal fluct. ↓', 'RT range left', 'RT range right', 
         'MZ range left', 'MZ range right', 'Name'])
+  data_meta: pd.DataFrame
+      source data for the plot action annotations (columns={
+                      "user_date": "Date", "user_email": "Contact", 
+                      "additional_information": "Additional_Information", 
+                      "problems": "Problems", "actions": "Actions"})
 
   Returns
   -------
@@ -435,7 +452,12 @@ def plot_metrics_daterange(start:dt.datetime, end:dt.datetime, selection:List[st
 
   truncated.Date = truncated.Date.dt.date
   line_plot = truncated.hvplot.line(x='Date', title='Single Metrics Timeseriesplot').opts(shared_axes=False)
-  return line_plot
+
+  
+  truncated_meta = data_meta[(data_meta.Date.dt.date >= start.date()) & (data_meta.Date.dt.date <= end.date())]
+  annotations = [hv.VLine(a) for a in truncated_meta.Date.dt.date.to_list()]
+
+  return hv.Overlay([line_plot] + annotations).opts(hv.opts.VLine(line_width=0.2, line_dash='dashed', color='#0096FF')).opts(shared_axes=False)
 
 def plot_ccharts(start:dt.datetime, end:dt.datetime, data_peps:pd.DataFrame, 
                  peps_mean: Dict[str,float], peps_std: Dict[str,float]) -> hv.Layout:
@@ -554,7 +576,7 @@ class dataset_panels:
                           start=self.date_range_slider.param.value_start, 
                           end=self.date_range_slider.param.value_end,
                           selection=self.checkbox_group.param.value, 
-                          data=dataset.main)
+                          data=dataset.main,data_meta=dataset.meta)
     
     self.cchart_pane = pn.bind(plot_ccharts, 
                         start=self.date_range_slider.param.value_start, 
@@ -586,7 +608,7 @@ def update_ds(ds_key: str, mzqc_paths: Dict[str,str]):
         pn.param.set_values(app_col[3], loading=True),\
         pn.param.set_values(app_col[4], loading=True),\
         pn.param.set_values(app_col[5], loading=True):
-      current_dataset = load_ds(ds_key=ds_key, mzqc_paths=mzqc_paths)
+      current_dataset = load_ds(ds_key=ds_key, mzqc_paths=mzqc_paths, metadata_paths=metadata_paths)
       current_panels = dataset_panels(current_dataset)
       row1 = pn.Row(current_panels.ds_descriptor, current_panels.calendar_hist_pane)
       row2 = pn.Row(current_panels.df_widget)
