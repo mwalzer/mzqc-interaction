@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
-"""CRG-QC2-timeseries.ipynb
-
-## Load Dependencies and Data
-"""
+""" CRG-QC2-View: `panel serve qc2_timeseries.py` """
 import os
 import datetime as dt
-from typing import Dict, List, Tuple
+from typing import Dict, List
 from dataclasses import dataclass, field
+import logging
 
 import pandas as pd
 from mzqc import MZQCFile as qc
@@ -14,9 +12,12 @@ from mzqc import MZQCFile as qc
 import panel as pn
 import hvplot.pandas
 import holoviews as hv
-# from bokeh.models.formatters import DatetimeTickFormatter
+
 pn.extension('tabulator')
 hv.extension('bokeh')
+pn.extension(loading_spinner='dots', loading_color='#633663', template='bootstrap')
+
+qc2log = logging.getLogger()
 
 DESCR_TEMPL = """
 # The Data Set
@@ -42,7 +43,6 @@ class dataset:
         "# Chargestates": number of unique charge states in which the QC peptides were found per run,
         "# Identified QC2 Peptides": number of QC2 peptides identified per run,
   """
-
   main: pd.DataFrame
   tics: pd.DataFrame 
   peps: pd.DataFrame
@@ -76,7 +76,6 @@ class dataset:
       "# Chargestates": self.peps.groupby(['Date','Name'])['Chargestate'].nunique().mean(),
       "# Identified QC2 Peptides": self.peps.groupby(['Date','Name'])['Peptide'].nunique().mean(),
     }
-
 
 def extract_date(rowrunmzqc: qc.MzQcFile) -> pd.Timestamp:
   """extracts a time object from a mzQC object
@@ -127,6 +126,8 @@ def load_main_from_mzqc(rowrunname: str, rowrunmzqc: qc.MzQcFile) -> pd.DataFram
   """
   rundate = extract_date(rowrunmzqc)
   df = pd.DataFrame({'Date': rundate,
+          'Name':rowrunname,
+          'Date .. Name': rundate.strftime('%Y-%m-%d') + ' .. ' + rowrunname[-10:],
           '# MS1': next(iter([cd.value for cd in rowrunmzqc.runQualities[0].qualityMetrics if cd.accession=="MS:4000059"])),
           '# MS2': next(iter([cd.value for cd in rowrunmzqc.runQualities[0].qualityMetrics if cd.accession=="MS:4000060"])),
           '# ID MS2': next(iter([cd.value for cd in rowrunmzqc.runQualities[0].qualityMetrics if cd.accession=="MS:1003251"])),
@@ -141,8 +142,6 @@ def load_main_from_mzqc(rowrunname: str, rowrunmzqc: qc.MzQcFile) -> pd.DataFram
           # 'MZ range': str(next(iter([cd.value for cd in rowrunmzqc.runQualities[0].qualityMetrics if cd.accession=="MS:4000069"]))),
           'mzrange': [cd.value for cd in rowrunmzqc.runQualities[0].qualityMetrics if cd.accession=="MS:4000069"],
           'rtrange': [cd.value for cd in rowrunmzqc.runQualities[0].qualityMetrics if cd.accession=="MS:4000070"],
-          'Name':rowrunname,
-          "Date .. Name": rundate.strftime('%Y-%m-%d') + rowrunname[-10:]
           })
   df = df.join(pd.DataFrame(df.pop('mzrange').tolist(), index=df.index, columns=["MZ range left", "MZ range right"]))
   df = df.join(pd.DataFrame(df.pop('rtrange').tolist(), index=df.index, columns=["RT range left", "RT range right"]))
@@ -244,9 +243,9 @@ def load_ds(ds_key: str, mzqc_paths: Dict[str,List[str]]) -> dataset:
   """
   # adds 'dRT','# Identified QC2 Peptides' to pep?
   if ds_key not in mzqc_paths.keys():
-    print("ds_key not in mzqc_paths.")
+    logging.error("ds_key not in mzqc_paths.")
     return
-  print(">>>updating with {}".format(ds_key))
+  qc2log.debug("updating with {}".format(ds_key))
 
   dfs_main = list()
   dfs_tics = list()
@@ -259,7 +258,7 @@ def load_ds(ds_key: str, mzqc_paths: Dict[str,List[str]]) -> dataset:
         dfs_tics.append(load_tic_from_mzqc(name, mzqcobj))
         dfs_peps.append(load_peps_from_mzqc(name,mzqcobj))
   
-  return dataset(main = pd.concat(dfs_main, axis=0, ignore_index=True).sort_values(by='Date').reset_index(drop=True), 
+  return dataset(main = pd.concat(dfs_main, axis=0, ignore_index=True).sort_values(by='Date'), 
                 peps = pd.concat(dfs_peps, axis=0, ignore_index=True).sort_values(by='Date'),
                 tics = pd.concat(dfs_tics, axis=0, ignore_index=True).sort_values(by='Date'),
                 label = dataset_mid_path[ds_key], 
@@ -279,19 +278,18 @@ def plot_calendar_hist(data:pd.DataFrame) -> hvplot.hvPlot:
   hvplot.hvPlot
       a Holoviews plot object
   """
-  print(">>>plot_calendar histogram")
+  qc2log.debug("plot_calendar histogram")
   if (data.shape[0] == 0):
     return pd.DataFrame(columns=["Date","Value"]).hvplot.line(
           title="QC2 Run Yearly Distribution", 
           ylabel="# Runs",
           xlabel="Month of {}".format("N/A"))
 
-  print(">>>plot_calendar histogram in ernest")
+  qc2log.debug("plot_calendar histogram in ernest")
   calendar_hist = data.assign(month=data.Date.dt.month)\
         .groupby(by=['month']).count().hvplot.bar(y="Date")\
         .opts(title="QC2 Run Yearly Distribution", ylabel="# Runs",
               xlabel="Month of {}".format(next(iter(data.Date.dt.year)))).opts(shared_axes=False)
-  print(data.assign(month=data.Date.dt.month))
   return calendar_hist
 
 def plot_tics(selection:List[str], data:pd.DataFrame) -> hvplot.hvPlot:
@@ -309,7 +307,7 @@ def plot_tics(selection:List[str], data:pd.DataFrame) -> hvplot.hvPlot:
   hvplot.hvPlot
       a Holoviews plot object
   """
-  print(">>>plot_tics")
+  qc2log.debug("plot_tics")
   if (data.shape[0]==0) or\
      (len(selection)==0):
     return pd.DataFrame(columns=["RT", "Intensity"]).hvplot.line(title="Total Ion Chromatogram",
@@ -319,12 +317,11 @@ def plot_tics(selection:List[str], data:pd.DataFrame) -> hvplot.hvPlot:
                                                             frame_height=500,
                                                             frame_width=800,)
   
-  print(">>>plot_tics in ernest")
+  qc2log.debug("plot_tics in ernest")
   # with pn.param.set_values(col[3][0], loading=True):
   while True:
     selected_tic = data[data.Name.isin(selection)].copy()
     selected_tic = selected_tic[["RT","Intensity","Date .. Name"]].sort_values(["RT"], axis = 0, ascending = True)
-    print(selected_tic)
     plot = selected_tic.hvplot.line(x="RT",y="Intensity", by=["Date .. Name"],
                                     title="Total Ion Chromatogram",
                                     xlabel="Retentiontime [s]", ylabel="Relative Intensity of Ion Current",
@@ -332,6 +329,20 @@ def plot_tics(selection:List[str], data:pd.DataFrame) -> hvplot.hvPlot:
     return plot 
 
 def indices_to_names_to_plot_tics(selection_indices:List[int], selection_dataset:dataset) -> hvplot.hvPlot:
+  """helper function to bundle the selection's names as argument for plot_tics
+
+  Parameters
+  ----------
+  selection_indices : List[int]
+      selection of rows in the df_widget
+  selection_dataset : dataset
+      object of the dataset currently being displayed
+  
+  Returns
+  -------
+  hvplot.hvPlot
+      hvPlot from calling plot_tics
+  """
   names = selection_dataset.main_index_to_names(selection_indices)
   return plot_tics(names, selection_dataset.tics) 
 
@@ -358,7 +369,7 @@ def plot_runsticker(selection:List[int], data:pd.DataFrame) -> hv.Layout:
       * mzax = lineplot(m/z Range Setting)
       * flax = barplot(u'# Signal fluct. ↓', u'# Signal fluct. ↑')
   """
-  print(">>>plot_runsticker")
+  qc2log.debug("plot_runsticker")
   if (data.shape[0] == 0) or\
      (len(selection)==0):
     selection_df = pd.DataFrame(columns=['Date','# MS1','# MS2','# ID MS2','# Features','# ID Features', u'# Signal fluct. ↓', u'# Signal fluct. ↑',])
@@ -370,7 +381,7 @@ def plot_runsticker(selection:List[int], data:pd.DataFrame) -> hv.Layout:
             .set_index('Date').astype('int').hvplot.bar(rot=45, frame_height=200, frame_width=200)
     return (idax + qaax + mzax + flax).cols(2).opts(shared_axes=False)
 
-  print(">>>plot_runsticker in ernest")
+  qc2log.debug("plot_runsticker in ernest")
   # with pn.param.set_values(col[3][1], loading=True):
   while True:
     selection_df = data.iloc[selection].copy()
@@ -383,7 +394,6 @@ def plot_runsticker(selection:List[int], data:pd.DataFrame) -> hv.Layout:
                               frame_width=200, frame_height=200).opts(yaxis='bare')
     flax = selection_df[[u'# Signal fluct. ↓', u'# Signal fluct. ↑', 'Date']]\
             .set_index('Date').astype('int').hvplot.bar(rot=45, frame_width=200, frame_height=200)
-    print(selection_df)
     return (idax + qaax + mzax + flax).cols(2).opts(shared_axes=False)
 
 def plot_metrics_daterange(start:dt.datetime, end:dt.datetime, selection:List[str], data:pd.DataFrame) -> hvplot.hvPlot:
@@ -409,12 +419,12 @@ def plot_metrics_daterange(start:dt.datetime, end:dt.datetime, selection:List[st
   hvplot.hvPlot
       a lineplot overlay of all selected columns and selected dates
   """
-  print(">>>plot_metrics_daterange")
+  qc2log.debug("plot_metrics_daterange")
   if (data.shape[0] == 0) or\
      (len(selection)==0):
     return pd.DataFrame(columns=["Date","Value"]).hvplot.line(xlabel='Date', title='Single Metrics Timeseriesplot')
 
-  print(">>>plot_metrics_daterange in ernest")
+  qc2log.debug("plot_metrics_daterange in ernest")
   truncated = data.loc[:, (data.columns[
     (data.columns.str.startswith(('#','Date'))) & (data.columns.isin(selection+['Date']))
     ])]
@@ -425,7 +435,6 @@ def plot_metrics_daterange(start:dt.datetime, end:dt.datetime, selection:List[st
 
   truncated.Date = truncated.Date.dt.date
   line_plot = truncated.hvplot.line(x='Date', title='Single Metrics Timeseriesplot').opts(shared_axes=False)
-  print(truncated)
   return line_plot
 
 def plot_ccharts(start:dt.datetime, end:dt.datetime, data_peps:pd.DataFrame, 
@@ -456,14 +465,14 @@ def plot_ccharts(start:dt.datetime, end:dt.datetime, data_peps:pd.DataFrame,
   hv.Layout
       a HoloViews layout of 4 control charts
   """
-  print(">>>plot_ccharts")
+  qc2log.debug("plot_ccharts")
   if (data_peps.shape[0] == 0) or\
      (peps_mean is None) or\
      (peps_std is None):
     layout = hv.Layout([pd.DataFrame(columns=["Date","mean per day"]).hvplot.line()]*4).cols(2).opts(shared_axes=False)
     return layout
     
-  print(">>>plot_metrics_daterange in ernest")
+  qc2log.debug("plot_metrics_daterange in ernest")
   pep_df = data_peps
   filtered_pep_df = pep_df[(pep_df['Date'].dt.date >=  start.date()) & (pep_df['Date'].dt.date <=  end.date())]
   filtered_pep_df_means = pd.DataFrame({
@@ -494,13 +503,11 @@ def plot_ccharts(start:dt.datetime, end:dt.datetime, data_peps:pd.DataFrame,
     fig.opts(ylim=(peps_mean[metric_name]-3*peps_std[metric_name], peps_mean[metric_name]+3*peps_std[metric_name]),
              default_tools=[], active_tools=[], tools=['wheel_zoom', 'save', 'reset', 'hover'],toolbar='above')
     figs.append(fig)
-  print(filtered_pep_df_means)
   layout = hv.Layout(figs).cols(2).opts(shared_axes=False)
   return layout
 
 class dataset_panels:
-  """generates the panels and widgets for a given dataset and holds them
-  """
+  """generates the panels and widgets for a given dataset and holds them"""
   DF_MAX_SELECT = 6
   def __init__(self, dataset: dataset):
     self.ds_descriptor = pn.pane.Markdown(name="Dataset descriptor", 
@@ -515,8 +522,9 @@ class dataset_panels:
                                     show_index=False,
                                     pagination='local', page_size=10,
                                     disabled=True,
-                                    hidden_columns=["Name", 'RT Range left', 'RT Range right',
-                                                    'MZ Range left','MZ Range right', "Date .. Name"])
+                                    hidden_columns=["Date", "Name",
+                                                    'RT range left', 'RT range right',
+                                                    'MZ range left','MZ range right'])
 
     self.date_range_slider = pn.widgets.DateRangeSlider(
       name='Date Range Slider',
@@ -555,9 +563,11 @@ class dataset_panels:
                         peps_mean=dataset.peps_mean, 
                         peps_std=dataset.peps_std)
 
+# """main loop code starts here"""
+
 # mzqc_basepath = "/content/drive/Shareddrives/mzqclib-manuscript/test data/CRG"
-# mzqc_basepath = "mzqcs"
-mzqc_basepath = "smalldevset"
+mzqc_basepath = "mzqcs"
+# mzqc_basepath = "smalldevset"
 dataset_mid_path = {"Lumos_2017": "PXD019888",
 "Velos_2018": "PXD019889",
 "Lumos_2018": "PXD019891",
@@ -566,7 +576,6 @@ metadata_paths = {k: os.path.join(os.path.join(mzqc_basepath, v), "metadata_"+k+
 mzqc_paths = {k: [os.path.join(os.path.join(mzqc_basepath, v), x) for x in os.listdir(os.path.join(mzqc_basepath, v)) if x.endswith(".mzqc")] for k,v in dataset_mid_path.items()}
 
 ds_select = pn.widgets.Select(name='Select Dataset', options=list(mzqc_paths.keys()))
-# ds_select.value = next(iter(list(mzqc_paths.keys())))
 app_col = None
 def update_ds(ds_key: str, mzqc_paths: Dict[str,str]):
   global app_col
@@ -585,7 +594,9 @@ def update_ds(ds_key: str, mzqc_paths: Dict[str,str]):
       internal_col = pn.Column(current_panels.date_range_slider, 
                               current_panels.checkbox_group)
       row4 = pn.Row(internal_col, current_panels.metrics_pane)
-      row5 = pn.Row(tabs = pn.Tabs(current_panels.cchart_pane, tabs_location='left'))   # TODO ,('Rbar control chart', cchart_pane)
+      row5 = pn.Row(pn.Tabs(('Xbar chart',current_panels.cchart_pane), 
+                            ('Rbar chart',pn.Row(current_panels.cchart_pane)),  
+                            tabs_location='left'))   # TODO ,('Rbar chart', !cchart_pane)
       app_col[1:]=[row1,row2,row3,row4,row5]
 
 ds_switch = pn.bind(update_ds, 
@@ -594,11 +605,9 @@ ds_switch = pn.bind(update_ds,
 
 app_col = pn.Column(pn.Row(pn.pane.Markdown(name="Dataset descriptor", object="# QC2 View"),
                            ds_select,ds_switch), 
-                    pn.Row(), pn.Row(), pn.Row(), pn.Row(), pn.Row())
-
-app_col.servable(title="QC2")
-update_ds(ds_key=next(iter(list(mzqc_paths.keys()))),mzqc_paths=mzqc_paths)
-print("appcol",app_col,"\nlen ",len(app_col))
-
-# ! python /home/vscode/.local/bin/panel serve crg_qc2_timeseries.py
-# ! panel serve qc2_timeseries.py
+                    pn.Row(pn.Spacer(styles=dict(background='WhiteSmoke'), sizing_mode='stretch_both'), height=200, width=800), 
+                    pn.Row(pn.Spacer(styles=dict(background='WhiteSmoke'), sizing_mode='stretch_both'), height=200, width=800), 
+                    pn.Row(pn.Spacer(styles=dict(background='WhiteSmoke'), sizing_mode='stretch_both'), height=200, width=800), 
+                    pn.Row(pn.Spacer(styles=dict(background='WhiteSmoke'), sizing_mode='stretch_both'), height=200, width=800), 
+                    pn.Row(pn.Spacer(styles=dict(background='WhiteSmoke'), sizing_mode='stretch_both'), height=200, width=800))
+app_col.servable(title="QC2 Dashboard")
