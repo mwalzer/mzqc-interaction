@@ -302,6 +302,7 @@ def plot_calendar_hist(data:pd.DataFrame) -> hvplot.hvPlot:
         .groupby(by=['month']).count().hvplot.bar(y="Date")\
         .opts(title="QC2 Run Yearly Distribution", ylabel="# Runs",
               xlabel="Month of {}".format(next(iter(data.Date.dt.year)))).opts(shared_axes=False)
+  calendar_hist.tools=[]
   return calendar_hist
 
 def plot_tics(selection:List[str], data:pd.DataFrame) -> hvplot.hvPlot:
@@ -337,7 +338,8 @@ def plot_tics(selection:List[str], data:pd.DataFrame) -> hvplot.hvPlot:
     plot = selected_tic.hvplot.line(x="RT",y="Intensity", by=["Date .. Name"],
                                     title="Total Ion Chromatogram",
                                     xlabel="Retentiontime [s]", ylabel="Relative Intensity of Ion Current",
-                                    frame_height=500, frame_width=1000,).opts(shared_axes=False)
+                                    frame_height=500, frame_width=1000,).opts(shared_axes=False, default_tools=[],
+                                                                              tools=['xwheel_zoom','xpan','save','reset','hover'])
     return plot 
 
 def indices_to_names_to_plot_tics(selection_indices:List[int], selection_dataset:dataset) -> hvplot.hvPlot:
@@ -450,9 +452,9 @@ def plot_metrics_daterange(start:dt.datetime, end:dt.datetime, selection:List[st
     return pd.DataFrame(columns=["Date","Value"]).hvplot.line(xlabel='Date', title='Single Metrics Timeseriesplot')
 
   truncated.Date = truncated.Date.dt.date
-  line_plot = truncated.hvplot.line(x='Date', title='Single Metrics Timeseriesplot').opts(shared_axes=False)
+  line_plot = truncated.hvplot.line(x='Date', title='Single Metrics Timeseriesplot').opts(
+    shared_axes=False, default_tools=[], tools=['xwheel_zoom', 'xpan', 'save', 'reset', 'hover'])
 
-  
   truncated_meta = data_meta[(data_meta.Date.dt.date >= start.date()) & (data_meta.Date.dt.date <= end.date())]
   annotations = [hv.VLine(a) for a in truncated_meta.Date.dt.date.to_list()]
 
@@ -522,10 +524,10 @@ def plot_ccharts(start:dt.datetime, end:dt.datetime, data_peps:pd.DataFrame,
     hspans_b2 = hv.HSpan(peps_mean[metric_name]-2*peps_std[metric_name], peps_mean[metric_name]-3*peps_std[metric_name]).opts(color='#933126')
 
     fig = hspans_t0 * hspans_t1 * hspans_t2 * hspans_b0 * hspans_b1 * hspans_b2 * hline * \
-      filtered_pep_df_means.hvplot.line(y=metric_name, title= metric_name + " per day mean cchart")
+      filtered_pep_df_means.hvplot.line(y=metric_name, title= metric_name + " per day mean cchart", xlabel="Date")
     fig.opts(ylim=(peps_mean[metric_name]-3*peps_std[metric_name], peps_mean[metric_name]+3*peps_std[metric_name]),
-             default_tools=[], active_tools=[], tools=['wheel_zoom', 'save', 'reset', 'hover'])
-    figs.append(fig)
+             default_tools=[], tools=['xwheel_zoom', 'xpan', 'save', 'reset', 'hover'])
+    figs.append(fig) 
   layout = hv.Layout(figs).cols(2).opts(shared_axes=False)
   return layout
 
@@ -589,8 +591,8 @@ class dataset_panels:
 # """main loop code starts here"""
 
 # mzqc_basepath = "/content/drive/Shareddrives/mzqclib-manuscript/test data/CRG"
-mzqc_basepath = "mzqcs"
-# mzqc_basepath = "smalldevset"
+# mzqc_basepath = "mzqcs"
+mzqc_basepath = "smalldevset"
 dataset_mid_path = {"Lumos_2017": "PXD019888",
 "Velos_2018": "PXD019889",
 "Lumos_2018": "PXD019891",
