@@ -2,7 +2,7 @@
 """ CRG-QC2-View: `panel serve qc2_timeseries.py` """
 import os
 import datetime as dt
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from dataclasses import dataclass, field
 import logging
 import json
@@ -19,6 +19,12 @@ hv.extension('bokeh')
 pn.extension(loading_spinner='dots', loading_color='#633663', template='bootstrap')
 
 qc2log = logging.getLogger()
+
+# antibias constants for n=10 (#QC2 peptides) to estimate sigma of error
+# see https://web.mit.edu/2.810/www/files/readings/ControlChartConstantsAndFormulae.pdf
+A2 = 0.308
+D3 = 0.223
+D4 = 1.777
 
 DESCR_TEMPL = """
 # The Data Set
@@ -66,18 +72,32 @@ class dataset:
     self.peps = pd.merge(self.peps, pd.DataFrame(
                   {"mean_rt_pp": self.peps.groupby(['Peptide'])['RT'].mean()}), how="inner", on="Peptide")
     self.peps["dRT"] = (self.peps['mean_rt_pp'] - self.peps['RT']).drop(columns=["mean_rt_pp"])
-    self.peps_std = {
-      "dRT": self.peps['dRT'].std(),
-      "dPPM": self.peps['dPPM'].std(),
-      "# Chargestates": self.peps.groupby(['Date','Name'])['Chargestate'].nunique().std(),
-      "# Identified QC2 Peptides": self.peps.groupby(['Date','Name'])['Peptide'].nunique().std(),
-    }
     self.peps_mean = {
-      "dRT": self.peps['dRT'].mean(),
-      "dPPM": self.peps['dPPM'].mean(),
-      "# Chargestates": self.peps.groupby(['Date','Name'])['Chargestate'].nunique().mean(),
-      "# Identified QC2 Peptides": self.peps.groupby(['Date','Name'])['Peptide'].nunique().mean(),
+      "dRT": self.peps.groupby(['Date','Name'])['dRT'].mean().mean(),
+      "dPPM": self.peps.groupby(['Date','Name'])['dPPM'].mean().mean(),
+      "# Chargestates": self.peps.groupby(['Date','Name','Peptide'])['Chargestate'].nunique().groupby(['Date','Name']).mean().mean(),
+      "# Identified QC2 Peptides": self.peps.groupby(['Date','Name','Peptide'])['RT'].count().groupby(['Date','Name']).mean().mean(),
     }
+    self.peps_std = {
+      "dRT": self.peps.groupby(['Date','Name'])['dRT'].mean().std(),
+      "dPPM": self.peps.groupby(['Date','Name'])['dPPM'].mean().std(),
+      "# Chargestates": self.peps.groupby(['Date','Name','Peptide'])['Chargestate'].nunique().groupby(['Date','Name']).mean().std(),
+      "# Identified QC2 Peptides": self.peps.groupby(['Date','Name','Peptide'])['RT'].count().groupby(['Date','Name']).mean().std(),
+    }
+    self.peps_Rbar = {
+      "dRT": (self.peps.groupby(['Date','Name'])['dRT'].max()- self.peps.groupby(['Date','Name'])['dRT'].min()).mean(),
+      "dPPM": (self.peps.groupby(['Date','Name'])['dPPM'].max()-self.peps.groupby(['Date','Name'])['dPPM'].min()).mean(),
+      "# Chargestates": (self.peps.groupby(['Date','Name','Peptide'])['Chargestate'].nunique().groupby(['Date','Name']).max() - 
+                        self.peps.groupby(['Date','Name','Peptide'])['Chargestate'].nunique().groupby(['Date','Name']).min()).mean(),
+      "# Identified QC2 Peptides": (self.peps.groupby(['Date','Name','Peptide'])['RT'].count().groupby(['Date','Name']).max() - 
+                                    self.peps.groupby(['Date','Name','Peptide'])['RT'].count().groupby(['Date','Name']).min()).mean(),
+    }
+    # self.peps_ccl = self.peps_mean
+    self.peps_lcl = {metric_name: self.peps_mean[metric_name] - A2 * self.peps_Rbar[metric_name]
+                    for metric_name in self.peps_mean.keys()}
+    self.peps_ucl = {metric_name: self.peps_mean[metric_name] + A2 * self.peps_Rbar[metric_name]
+                    for metric_name in self.peps_mean.keys()}
+    # TODO add as single metric number of per run of detected QC2 petide types self.peps.groupby(['Date','Name'])['Peptide'].nunique()
 
 def extract_date(rowrunmzqc: qc.MzQcFile) -> pd.Timestamp:
   """extracts a time object from a mzQC object
@@ -462,8 +482,9 @@ def plot_metrics_daterange(start:dt.datetime, end:dt.datetime, selection:List[st
     hv.opts.VLine(line_width=0.2, line_dash='dashed', color='#0096FF')
     ).opts(shared_axes=False, frame_height=400, frame_width=800)
 
-def plot_ccharts(start:dt.datetime, end:dt.datetime, data_peps:pd.DataFrame, 
-                 peps_mean: Dict[str,float], peps_std: Dict[str,float]) -> hv.Layout:
+def plot_XbarRchart(start:dt.datetime, end:dt.datetime, data_peps:pd.DataFrame, 
+                    peps_mean: Dict[str,float], peps_std: Dict[str,float], 
+                    peps_Rbar: Dict[str,float], peps_cl: Tuple[Dict[str,float]]) -> Dict[str,hv.Layout]:
   """Xbar control charts for the mean deviation per run for ['dRT', 'dPPM', '# Chargestates', '# Identified QC2 Peptides']
 
   Parameters
@@ -472,49 +493,62 @@ def plot_ccharts(start:dt.datetime, end:dt.datetime, data_peps:pd.DataFrame,
       start of the selected daterange
   end : dt.datetime
       end of the selected daterange 
-  data_main : pd.DataFrame
-      source data for the plot (columns=[
-        'Date', '# MS1', '# MS2', '# ID MS2', '# Peptidoforms', '# Proteoforms',
-        '# Proteins', '# Features', '# ID Features', u'# Signal fluct. ↑',
-        u'# Signal fluct. ↓', 'RT range left', 'RT range right', 'MZ range left', 'MZ range right', 'Name'])
   data_peps : pd.DataFrame
       source data for the plot (columns=['dRT', 'dPPM', '# Chargestates', 
         '# Identified QC2 Peptides'])
   peps_mean: Dict[str,float]
-      per dataset means of ['dRT', 'dPPM', '# Chargestates', '# Identified QC2 Peptides'] packed in a dict
+      per dataset (daily) means of ['dRT', 'dPPM', '# Chargestates', '# Identified QC2 Peptides'] packed in a dict
   peps_std: Dict[str,float]
-      per dataset standard deviations of ['dRT', 'dPPM', '# Chargestates', '# Identified QC2 Peptides'] packed in a dict
+      per dataset (daily) standard deviations of ['dRT', 'dPPM', '# Chargestates', '# Identified QC2 Peptides'] 
+      packed in a dict
+  peps_Rbar: Dict[str,float]
+      per dataset (daily) range of ['dRT', 'dPPM', '# Chargestates', '# Identified QC2 Peptides'] packed in a dict
+  peps_cl: Tuple[Dict[str,float]]
+      per dataset the computed lower(first) and upper(second) control limits of 
+      ['dRT', 'dPPM', '# Chargestates', '# Identified QC2 Peptides'] packed in a dict
 
   Returns
   -------
   hv.Layout
       a HoloViews layout of 4 control charts
   """
-  qc2log.debug("plot_ccharts")
+  qc2log.debug("plot_Xbarchart")
   if (data_peps.shape[0] == 0) or\
      (peps_mean is None) or\
      (peps_std is None):
     layout = hv.Layout([pd.DataFrame(columns=["Date","mean per day"]).hvplot.line()]*4).cols(2).opts(shared_axes=False)
     return layout
     
-  qc2log.debug("plot_metrics_daterange in ernest")
+  qc2log.debug("plot_Xbarchart in ernest")
   pep_df = data_peps
   filtered_pep_df = pep_df[(pep_df['Date'].dt.date >=  start.date()) & (pep_df['Date'].dt.date <=  end.date())]
   filtered_pep_df_means = pd.DataFrame({
       "dRT": filtered_pep_df.groupby(['Date','Name'])['dRT'].mean(),
       "dPPM": filtered_pep_df.groupby(['Date','Name'])['dPPM'].mean(),
-      "# Chargestates": filtered_pep_df.groupby(['Date','Name'])['Chargestate'].nunique(),
+      "# Chargestates": filtered_pep_df.groupby(['Date','Name','Peptide'])['Chargestate'].nunique().groupby(['Date','Name']).mean(),
+      "# Identified QC2 Peptides": filtered_pep_df.groupby(['Date','Name'])['Peptide'].nunique(),
+  })
+  filtered_pep_df_ranges = pd.DataFrame({
+      "dRT": filtered_pep_df.groupby(['Date','Name'])['dRT'].max()-filtered_pep_df.groupby(['Date','Name'])['dRT'].min(),
+      "dPPM": filtered_pep_df.groupby(['Date','Name'])['dPPM'].max()-filtered_pep_df.groupby(['Date','Name'])['dPPM'].min(),
+      "# Chargestates": filtered_pep_df.groupby(['Date','Name','Peptide'])['Chargestate'].nunique().groupby(['Date','Name']).max() - 
+                          filtered_pep_df.groupby(['Date','Name','Peptide'])['Chargestate'].nunique().groupby(['Date','Name']).min(),
       "# Identified QC2 Peptides": filtered_pep_df.groupby(['Date','Name'])['Peptide'].nunique(),
   })
 
-  figs = list()
+  figs = dict()
   for metric_name in filtered_pep_df_means.keys():
-    hline = hv.HLine(peps_mean[metric_name])
-    hline.opts(
-        color='red',
-        line_dash='dashed',
-        line_width=2.0,
-    )
+    hlines = list()
+    # Xbar ccl, lcl, ucl, Rbar ccl, lcl, ucl
+    for k,v in [('blue', peps_mean[metric_name]),('red',peps_cl[0][metric_name]),('red',peps_cl[1][metric_name]),
+                ('blue', peps_Rbar[metric_name]),('red',peps_Rbar[metric_name]*D3),('red',peps_Rbar[metric_name]*D4)]:
+      hline = hv.HLine(v)
+      hline.opts(
+          color=k,
+          line_dash='dashed',
+          line_width=2.0,
+      )
+      hlines.append(hline)
 
     hspans_t0 = hv.HSpan(peps_mean[metric_name], peps_mean[metric_name]+1*peps_std[metric_name]).opts(color='#cadeab')
     hspans_b0 = hv.HSpan(peps_mean[metric_name], peps_mean[metric_name]-1*peps_std[metric_name]).opts(color='#cadeab')
@@ -523,13 +557,28 @@ def plot_ccharts(start:dt.datetime, end:dt.datetime, data_peps:pd.DataFrame,
     hspans_t2 = hv.HSpan(peps_mean[metric_name]+2*peps_std[metric_name], peps_mean[metric_name]+3*peps_std[metric_name]).opts(color='#933126')
     hspans_b2 = hv.HSpan(peps_mean[metric_name]-2*peps_std[metric_name], peps_mean[metric_name]-3*peps_std[metric_name]).opts(color='#933126')
 
-    fig = hspans_t0 * hspans_t1 * hspans_t2 * hspans_b0 * hspans_b1 * hspans_b2 * hline * \
-      filtered_pep_df_means.hvplot.line(y=metric_name, title= metric_name + " per day mean cchart", xlabel="Date")
-    fig.opts(ylim=(peps_mean[metric_name]-3*peps_std[metric_name], peps_mean[metric_name]+3*peps_std[metric_name]),
+    xbar = hspans_t0 * hspans_t1 * hspans_t2 * hspans_b0 * hspans_b1 * hspans_b2 * hlines[0] * hlines[1] * hlines[2] * \
+      filtered_pep_df_means.hvplot.line(y=metric_name, title= metric_name + " (daily) mean cchart", xlabel="Date", 
+                                        ylabel=metric_name + " mean")
+    xbar.opts(ylim=(peps_mean[metric_name]-3*peps_std[metric_name], peps_mean[metric_name]+3*peps_std[metric_name]),
              default_tools=[], tools=['xwheel_zoom', 'xpan', 'save', 'reset', 'hover'])
-    figs.append(fig) 
-  layout = hv.Layout(figs).cols(2).opts(shared_axes=False)
-  return layout
+    # TODO debug empty rbar 
+    # TODO individual hspans for rbar
+    rbar = hspans_t0 * hspans_t1 * hspans_t2 * hspans_b0 * hspans_b1 * hspans_b2 * hlines[3] * hlines[4] * hlines[5] * \
+      filtered_pep_df_ranges.hvplot.line(y=metric_name, title= metric_name + " (daily) range cchart", xlabel="Date",
+                                         ylabel=metric_name + " range")
+    rbar.opts(ylim=(peps_mean[metric_name]-3*peps_std[metric_name], peps_mean[metric_name]+3*peps_std[metric_name]),
+             default_tools=[], tools=['xwheel_zoom', 'xpan', 'save', 'reset', 'hover'])
+    figs[metric_name] = hv.Layout([xbar,rbar]).cols(2).opts(shared_axes=False)
+  return figs
+  
+def layout_XbarRchart(start:dt.datetime, end:dt.datetime, data_peps:pd.DataFrame, 
+                      peps_mean: Dict[str,float], peps_std: Dict[str,float], 
+                      peps_Rbar: Dict[str,float], peps_cl: Tuple[Dict[str,float]]) -> Dict[str,hv.Layout]:
+  return pn.Tabs(*[(k, v) for k, v in plot_XbarRchart(start=start, end=end, data_peps=data_peps, 
+                                                      peps_mean=peps_mean, peps_std=peps_std, 
+                                                      peps_Rbar=peps_Rbar, peps_cl=peps_cl).items()],  
+                            tabs_location='left')
 
 class dataset_panels:
   """generates the panels and widgets for a given dataset and holds them"""
@@ -580,13 +629,16 @@ class dataset_panels:
                           end=self.date_range_slider.param.value_end,
                           selection=self.checkbox_group.param.value, 
                           data=dataset.main,data_meta=dataset.meta)
-    
-    self.cchart_pane = pn.bind(plot_ccharts, 
+          
+    # TODO wrap in layout fn (tab per metric name)
+    self.cchart_pane = pn.bind(layout_XbarRchart, 
                         start=self.date_range_slider.param.value_start, 
                         end=self.date_range_slider.param.value_end,
                         data_peps=dataset.peps,
                         peps_mean=dataset.peps_mean, 
-                        peps_std=dataset.peps_std)
+                        peps_std=dataset.peps_std,
+                        peps_Rbar=dataset.peps_Rbar,
+                        peps_cl=(dataset.peps_lcl,dataset.peps_ucl))
 
 # """main loop code starts here"""
 
@@ -594,9 +646,9 @@ class dataset_panels:
 # mzqc_basepath = "mzqcs"
 mzqc_basepath = "smalldevset"
 dataset_mid_path = {"Lumos_2017": "PXD019888",
-"Velos_2018": "PXD019889",
-"Lumos_2018": "PXD019891",
-"Velos_2017": "PXD019892"}
+                    "Velos_2018": "PXD019889",
+                    "Lumos_2018": "PXD019891",
+                    "Velos_2017": "PXD019892"}
 metadata_paths = {k: os.path.join(os.path.join(mzqc_basepath, v), "metadata_"+k+".json") for k,v in dataset_mid_path.items()}
 mzqc_paths = {k: [os.path.join(os.path.join(mzqc_basepath, v), x) for x in os.listdir(os.path.join(mzqc_basepath, v)) if x.endswith(".mzqc")] for k,v in dataset_mid_path.items()}
 
@@ -626,9 +678,7 @@ def update_ds(ds_key: str, mzqc_paths: Dict[str,str]):
       row5 = pn.Row(pn.Spacer(width=150, height=300), 
                     internal_col, 
                     current_panels.metrics_pane)
-      row6 = pn.Row(pn.Tabs(('Xbar chart',current_panels.cchart_pane), 
-                            ('Rbar chart',pn.Row(current_panels.cchart_pane)),  
-                            tabs_location='left'))   # TODO ,('Rbar chart', !cchart_pane)
+      row6 = current_panels.cchart_pane
       app_col[1:]=[row1,row2,row3,row4,row5,row6]
 
 ds_switch = pn.bind(update_ds, 
